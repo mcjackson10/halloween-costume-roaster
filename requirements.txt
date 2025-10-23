@@ -1,0 +1,8 @@
+# Core dependencies for Halloween Roaster
+anthropic>=0.39.0
+picamera2>=0.3.18
+pillow>=10.0.0
+SpeechRecognition>=3.10.0
+pygame>=2.5.0
+gTTS>=2.5.0
+PyAudio>=0.2.14

@@ -1,0 +1,17 @@
+[Unit]
+Description=Halloween Costume Roaster
+After=network.target sound.target bluetooth.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/Halloween
+EnvironmentFile=/home/pi/Halloween/.env
+ExecStart=/usr/bin/python3 /home/pi/Halloween/halloween_roaster.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
