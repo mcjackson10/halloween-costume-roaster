@@ -10,7 +10,7 @@ import base64
 import io
 from pathlib import Path
 from typing import Optional, Tuple
-import anthropic
+from openai import OpenAI
 from picamera2 import Picamera2
 from PIL import Image
 import speech_recognition as sr
@@ -21,11 +21,11 @@ import tempfile
 class HalloweenRoaster:
     def __init__(self):
         """Initialize the Halloween Roaster system"""
-        self.api_key = os.getenv("ANTHROPIC_API_KEY")
+        self.api_key = os.getenv("OPENAI_API_KEY")
         if not self.api_key:
-            raise ValueError("ANTHROPIC_API_KEY environment variable not set")
+            raise ValueError("OPENAI_API_KEY environment variable not set")
 
-        self.client = anthropic.Anthropic(api_key=self.api_key)
+        self.client = OpenAI(api_key=self.api_key)
 
         # Initialize camera
         print("Initializing camera...")
@@ -77,23 +77,21 @@ class HalloweenRoaster:
         return pil_image, image_base64
 
     def analyze_costume(self, image_base64: str) -> str:
-        """Use Claude to analyze the costume in the image"""
+        """Use GPT-4o mini to analyze the costume in the image"""
         print("Analyzing costume...")
 
-        message = self.client.messages.create(
-            model="claude-3-5-sonnet-20241022",
+        response = self.client.chat.completions.create(
+            model="gpt-4o-mini",
             max_tokens=1024,
             messages=[
                 {
                     "role": "user",
                     "content": [
                         {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": "image/jpeg",
-                                "data": image_base64,
-                            },
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{image_base64}"
+                            }
                         },
                         {
                             "type": "text",
@@ -104,7 +102,7 @@ class HalloweenRoaster:
             ],
         )
 
-        response_text = message.content[0].text
+        response_text = response.choices[0].message.content
         self.current_costume = response_text
         self.conversation_history.append({
             "role": "assistant",
@@ -149,14 +147,15 @@ class HalloweenRoaster:
         They're talking back to you! Continue the playful banter. Keep it fun, family-friendly, and hilarious.
         You can reference their costume and what they say. Keep responses under 3 sentences so they're quick and punchy."""
 
-        message = self.client.messages.create(
-            model="claude-3-5-sonnet-20241022",
+        response = self.client.chat.completions.create(
+            model="gpt-4o-mini",
             max_tokens=1024,
-            system=system_prompt,
-            messages=self.conversation_history
+            messages=[
+                {"role": "system", "content": system_prompt}
+            ] + self.conversation_history
         )
 
-        response_text = message.content[0].text
+        response_text = response.choices[0].message.content
         self.conversation_history.append({
             "role": "assistant",
             "content": response_text

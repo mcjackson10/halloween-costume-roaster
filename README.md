@@ -4,7 +4,7 @@ A fun Raspberry Pi 5 project that uses computer vision and AI to recognize Hallo
 
 ## Features
 
-- **Costume Recognition**: Uses Claude AI with vision capabilities to identify and analyze costumes
+- **Costume Recognition**: Uses GPT-4o mini with vision capabilities to identify and analyze costumes
 - **Witty Roasts**: Generates funny, family-friendly roasts about costumes
 - **Voice Interaction**: Listens for responses and engages in back-and-forth conversation
 - **Audio Output**: Speaks responses through a Bluetooth speaker
@@ -23,7 +23,7 @@ A fun Raspberry Pi 5 project that uses computer vision and AI to recognize Hallo
 - Raspberry Pi OS (64-bit recommended)
 - Python 3.9 or higher
 - Active internet connection (for LLM API calls and speech recognition)
-- Anthropic API key
+- OpenAI API key
 
 ## Setup Instructions
 
@@ -97,15 +97,15 @@ pip3 install -r requirements.txt
 **Set up API Key:**
 ```bash
 # Add to ~/.bashrc or ~/.profile
-echo 'export ANTHROPIC_API_KEY="your-api-key-here"' >> ~/.bashrc
+echo 'export OPENAI_API_KEY="your-api-key-here"' >> ~/.bashrc
 source ~/.bashrc
 
 # Or create a .env file in the project directory
-echo 'ANTHROPIC_API_KEY=your-api-key-here' > .env
+echo 'OPENAI_API_KEY=your-api-key-here' > .env
 ```
 
-**Get Anthropic API Key:**
-1. Sign up at https://console.anthropic.com/
+**Get OpenAI API Key:**
+1. Sign up at https://platform.openai.com/
 2. Navigate to API Keys section
 3. Create a new API key
 4. Copy and use in the configuration above
@@ -191,9 +191,9 @@ alsamixer
 ```
 
 ### API Errors
-- Verify API key is set correctly: `echo $ANTHROPIC_API_KEY`
+- Verify API key is set correctly: `echo $OPENAI_API_KEY`
 - Check internet connection
-- Verify API credits at https://console.anthropic.com/
+- Verify API credits at https://platform.openai.com/usage
 
 ### Speech Recognition Errors
 - Ensure internet connection (Google Speech Recognition requires internet)
@@ -247,7 +247,7 @@ After=network.target sound.target
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/Halloween
-Environment="ANTHROPIC_API_KEY=your-key-here"
+Environment="OPENAI_API_KEY=your-key-here"
 ExecStart=/usr/bin/python3 /home/pi/Halloween/halloween_roaster.py
 Restart=on-failure
 
@@ -267,15 +267,16 @@ For automatic triggering when someone approaches, you could add a PIR motion sen
 
 ## Cost Considerations
 
-- Anthropic API calls cost varies by usage
+- OpenAI GPT-4o mini API calls are very cost-effective
 - Each interaction uses approximately 2-4 API calls
-- Image analysis: ~$0.01-0.03 per image
-- Text generation: ~$0.001-0.005 per response
-- Budget approximately $0.05-0.10 per trick-or-treater
+- Image analysis: ~$0.0002-0.0005 per image
+- Text generation: ~$0.0001-0.0002 per response
+- Budget approximately $0.0007 per trick-or-treater (~$0.07 for 100 people)
+- **95% cheaper than Claude 3.5 Sonnet**
 
 ## Safety and Privacy
 
-- Images are sent to Anthropic's API for analysis
+- Images are sent to OpenAI's API for analysis
 - Consider adding a privacy notice for visitors
 - Images are not saved locally by default
 - Speech is processed by Google's Speech Recognition API
@@ -286,7 +287,7 @@ This project is provided as-is for educational and entertainment purposes.
 
 ## Credits
 
-- Built with Anthropic's Claude AI
+- Built with OpenAI's GPT-4o mini
 - Uses Google Speech Recognition
 - Text-to-speech via gTTS
 
@@ -295,6 +296,6 @@ This project is provided as-is for educational and entertainment purposes.
 For issues or questions:
 1. Check the troubleshooting section above
 2. Review Raspberry Pi camera documentation
-3. Check Anthropic API documentation
+3. Check OpenAI API documentation
 
 Happy Halloween! 🎃👻
