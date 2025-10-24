@@ -36,7 +36,18 @@ sudo apt install -y \
 
 echo ""
 echo "Step 3: Installing Python dependencies..."
-pip3 install -r requirements.txt
+# Check if we're in a virtual environment
+if [ -n "$VIRTUAL_ENV" ]; then
+    echo "Using virtual environment: $VIRTUAL_ENV"
+    pip install -r requirements.txt
+else
+    echo "Not in a virtual environment. Installing with pip3..."
+    echo "Note: You may need to create a virtual environment first:"
+    echo "  python3 -m venv venv"
+    echo "  source venv/bin/activate"
+    echo "  ./setup.sh"
+    pip3 install -r requirements.txt
+fi
 
 echo ""
 echo "Step 4: Camera configuration..."
@@ -55,8 +66,8 @@ if [ ! -f .env ]; then
     echo "Creating .env file from template..."
     cp .env.example .env
     echo ""
-    echo "⚠️  IMPORTANT: Edit .env file and add your Anthropic API key"
-    echo "   Get your key from: https://console.anthropic.com/"
+    echo "⚠️  IMPORTANT: Edit .env file and add your OpenAI API key"
+    echo "   Get your key from: https://platform.openai.com/api-keys"
     echo ""
     read -p "Press Enter to continue..."
 fi
@@ -91,7 +102,7 @@ echo "======================================"
 echo "Setup complete! 🎃"
 echo ""
 echo "Next steps:"
-echo "1. Edit .env file and add your Anthropic API key"
+echo "1. Edit .env file and add your OpenAI API key"
 echo "2. Pair your Bluetooth speaker (use 'bluetoothctl')"
 echo "3. Test the system: python3 halloween_roaster.py"
 echo ""
