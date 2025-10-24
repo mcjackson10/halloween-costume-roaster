@@ -11,7 +11,7 @@ def test_imports():
     """Test if all required packages are installed"""
     print("Testing package imports...")
     packages = {
-        'anthropic': 'anthropic',
+        'openai': 'openai',
         'PIL': 'pillow',
         'speech_recognition': 'SpeechRecognition',
         'pygame': 'pygame',
@@ -46,11 +46,11 @@ def test_imports():
 def test_api_key():
     """Test if API key is configured"""
     print("Testing API key configuration...")
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    api_key = os.getenv("OPENAI_API_KEY")
 
     if not api_key:
-        print("  ✗ ANTHROPIC_API_KEY not found")
-        print("  Set it with: export ANTHROPIC_API_KEY='your-key-here'")
+        print("  ✗ OPENAI_API_KEY not found")
+        print("  Set it with: export OPENAI_API_KEY='your-key-here'")
         print("  Or create a .env file")
         return False
     elif api_key == "your-api-key-here":
@@ -137,20 +137,20 @@ def test_audio_output():
 
 def test_api_connection():
     """Test API connection with a simple request"""
-    print("Testing Anthropic API connection...")
+    print("Testing OpenAI API connection...")
     try:
-        import anthropic
+        from openai import OpenAI
 
-        api_key = os.getenv("ANTHROPIC_API_KEY")
+        api_key = os.getenv("OPENAI_API_KEY")
         if not api_key or api_key == "your-api-key-here":
             print("  ✗ API key not configured properly")
             return False
 
-        client = anthropic.Anthropic(api_key=api_key)
+        client = OpenAI(api_key=api_key)
 
         # Simple test request
-        message = client.messages.create(
-            model="claude-3-5-sonnet-20241022",
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
             max_tokens=50,
             messages=[
                 {
@@ -160,9 +160,9 @@ def test_api_connection():
             ]
         )
 
-        response = message.content[0].text
+        response_text = response.choices[0].message.content
         print(f"  ✓ API connection successful!")
-        print(f"  Response: {response}\n")
+        print(f"  Response: {response_text}\n")
         return True
     except Exception as e:
         print(f"  ✗ API error: {e}")
