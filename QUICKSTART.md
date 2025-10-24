@@ -26,7 +26,7 @@ cp .env.example .env
 nano .env
 ```
 
-Get your API key from: https://console.anthropic.com/
+Get your API key from: https://platform.openai.com/api-keys
 
 ### 3. Test Components
 ```bash
@@ -101,7 +101,7 @@ pactl set-default-sink bluez_sink.XX_XX_XX_XX_XX_XX
 ### "API key error"
 ```bash
 # Verify it's set
-echo $ANTHROPIC_API_KEY
+echo $OPENAI_API_KEY
 
 # Or check .env file
 cat .env
