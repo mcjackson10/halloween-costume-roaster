@@ -29,8 +29,8 @@
                             ┌──────────────────┐
                             │  External APIs   │
                             │                  │
-                            │  • Anthropic API │
-                            │    (Claude)      │
+                            │  • OpenAI API    │
+                            │    (GPT-4o mini) │
                             │                  │
                             │  • Google Speech │
                             │    Recognition   │
@@ -63,8 +63,8 @@
           ┌────────────────────────┘
           ▼
    ┌─────────────────┐
-   │ Send to Claude  │
-   │  Vision API     │
+   │ Send to GPT-4o  │
+   │  mini Vision API│
    │                 │
    │ Prompt:         │
    │ "Analyze costume│
@@ -73,7 +73,7 @@
             │
             ▼
    ┌─────────────────┐
-   │ Claude analyzes │
+   │ GPT-4o analyzes │
    │ • Identifies    │
    │   costume       │
    │ • Generates     │
@@ -121,9 +121,9 @@
        │
        ▼
 ┌─────────────────┐
-│ Send to Claude  │
-│ with context    │
-│                 │
+│ Send to GPT-4o  │
+│ mini with       │
+│ context         │
 │ Prompt:         │
 │ "Respond to     │
 │  their comeback"│
@@ -147,7 +147,7 @@
 HalloweenRoaster
 │
 ├─── __init__()
-│    ├─ Initialize Anthropic client
+│    ├─ Initialize OpenAI client
 │    ├─ Initialize camera (Picamera2)
 │    ├─ Initialize speech recognition
 │    ├─ Initialize audio playback (pygame)
@@ -159,7 +159,7 @@ HalloweenRoaster
 │    └─ Return image + base64
 │
 ├─── analyze_costume(image_base64)
-│    ├─ Send image to Claude API
+│    ├─ Send image to GPT-4o mini API
 │    ├─ Get costume analysis + roast
 │    └─ Update conversation history
 │
@@ -170,7 +170,7 @@ HalloweenRoaster
 │
 ├─── generate_response(user_input)
 │    ├─ Add to conversation history
-│    ├─ Send to Claude API
+│    ├─ Send to GPT-4o mini API
 │    └─ Get witty comeback
 │
 ├─── speak(text)
@@ -210,7 +210,7 @@ HalloweenRoaster
        ▼                          │
 ┌─────────────┐                   │
 │  ANALYZING  │                   │
-│  (Claude)   │                   │
+│ (GPT-4o mini)│                   │
 └──────┬──────┘                   │
        │                          │
        ▼                          │
@@ -235,7 +235,7 @@ HalloweenRoaster
        ▼
 ┌─────────────┐
 │ RESPONDING  │
-│  (Claude)   │
+│ (GPT-4o mini)│
 └──────┬──────┘
        │
        ▼
@@ -264,10 +264,11 @@ HalloweenRoaster
 
 ## API Integration
 
-### Anthropic API
-- **Model**: claude-3-5-sonnet-20241022
+### OpenAI API
+- **Model**: gpt-4o-mini
 - **Vision**: Multimodal input (image + text)
 - **Max Tokens**: 1024 per response
+- **Pricing**: $0.15/M input tokens, $0.60/M output tokens
 - **Usage**:
   - Initial costume analysis (1 call per person)
   - Conversation responses (1 call per exchange)
@@ -344,7 +345,7 @@ HalloweenRoaster
 ## Security Considerations
 
 ### Data Privacy
-- Images sent to Anthropic API (encrypted HTTPS)
+- Images sent to OpenAI API (encrypted HTTPS)
 - Audio sent to Google API (encrypted HTTPS)
 - No local data persistence by default
 - API keys stored in environment variables
