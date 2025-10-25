@@ -17,15 +17,27 @@ import speech_recognition as sr
 import pygame
 from gtts import gTTS
 import tempfile
+import cv2
+import numpy as np
 
 class HalloweenRoaster:
-    def __init__(self):
-        """Initialize the Halloween Roaster system"""
+    def __init__(self, auto_detect: bool = True, cooldown_seconds: int = 60):
+        """Initialize the Halloween Roaster system
+
+        Args:
+            auto_detect: Enable automatic person detection (default: True)
+            cooldown_seconds: Seconds to wait between detecting same person (default: 60)
+        """
         self.api_key = os.getenv("OPENAI_API_KEY")
         if not self.api_key:
             raise ValueError("OPENAI_API_KEY environment variable not set")
 
         self.client = OpenAI(api_key=self.api_key)
+
+        # Detection settings
+        self.auto_detect = auto_detect
+        self.cooldown_seconds = cooldown_seconds
+        self.last_interaction_time = 0
 
         # Initialize camera
         print("Initializing camera...")
@@ -37,6 +49,19 @@ class HalloweenRoaster:
         self.camera.configure(camera_config)
         self.camera.start()
         time.sleep(2)  # Let camera warm up
+
+        # Initialize person detection (Haar Cascade)
+        if self.auto_detect:
+            print("Loading person detection model...")
+            # Using upper body detector as it works better for costumes
+            cascade_path = cv2.data.haarcascades + 'haarcascade_fullbody.xml'
+            self.person_cascade = cv2.CascadeClassifier(cascade_path)
+            if self.person_cascade.empty():
+                print("Warning: Full body cascade not found, trying upper body...")
+                cascade_path = cv2.data.haarcascades + 'haarcascade_upperbody.xml'
+                self.person_cascade = cv2.CascadeClassifier(cascade_path)
+            if self.person_cascade.empty():
+                raise ValueError("Could not load person detection cascade")
 
         # Initialize speech recognition
         print("Initializing speech recognition...")
@@ -56,7 +81,8 @@ class HalloweenRoaster:
         self.conversation_history = []
         self.current_costume = None
 
-        print("Halloween Roaster initialized and ready!")
+        mode = "AUTO-DETECT" if self.auto_detect else "MANUAL"
+        print(f"Halloween Roaster initialized and ready! Mode: {mode}")
 
     def capture_image(self) -> Tuple[Image.Image, bytes]:
         """Capture an image from the camera and return PIL Image and base64 encoded data"""
@@ -75,6 +101,40 @@ class HalloweenRoaster:
         image_base64 = base64.standard_b64encode(image_bytes).decode("utf-8")
 
         return pil_image, image_base64
+
+    def detect_person(self) -> bool:
+        """Detect if a person is present in the camera frame
+
+        Returns:
+            True if person detected, False otherwise
+        """
+        # Capture low-res frame for detection (faster processing)
+        image_array = self.camera.capture_array()
+
+        # Convert RGB to BGR for OpenCV
+        bgr_image = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
+
+        # Convert to grayscale for detection
+        gray = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2GRAY)
+
+        # Detect people using Haar Cascade
+        # Parameters tuned for detecting trick-or-treaters at door
+        people = self.person_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=3,
+            minSize=(100, 100)  # Minimum size to avoid false positives
+        )
+
+        return len(people) > 0
+
+    def is_cooldown_active(self) -> bool:
+        """Check if we're still in cooldown period from last interaction"""
+        if self.last_interaction_time == 0:
+            return False
+
+        elapsed = time.time() - self.last_interaction_time
+        return elapsed < self.cooldown_seconds
 
     def analyze_costume(self, image_base64: str) -> str:
         """Use GPT-4o mini to analyze the costume in the image"""
@@ -197,6 +257,9 @@ class HalloweenRoaster:
         print("Starting new interaction...")
         print("="*50)
 
+        # Update last interaction time for cooldown
+        self.last_interaction_time = time.time()
+
         # Reset conversation history for new person
         self.conversation_history = []
 
@@ -228,11 +291,48 @@ class HalloweenRoaster:
         print("\nInteraction complete!")
 
     def run(self):
-        """Main run loop"""
+        """Main run loop - supports both auto-detect and manual modes"""
         print("\n🎃 Halloween Roaster is running! 🎃")
         print("Press Ctrl+C to exit")
-        print("\nWaiting for trick-or-treaters...\n")
 
+        if self.auto_detect:
+            print(f"\n🤖 AUTO-DETECT MODE")
+            print(f"Cooldown between detections: {self.cooldown_seconds} seconds")
+            print("Monitoring for trick-or-treaters...\n")
+            self._run_auto_detect()
+        else:
+            print("\n👤 MANUAL MODE")
+            print("Waiting for trick-or-treaters...\n")
+            self._run_manual()
+
+    def _run_auto_detect(self):
+        """Auto-detect mode: continuously monitor for people"""
+        try:
+            while True:
+                # Check cooldown first
+                if self.is_cooldown_active():
+                    remaining = int(self.cooldown_seconds - (time.time() - self.last_interaction_time))
+                    if remaining % 10 == 0 or remaining <= 5:  # Print occasionally
+                        print(f"Cooldown active: {remaining}s remaining...", end='\r')
+                    time.sleep(1)
+                    continue
+
+                # Check for person
+                if self.detect_person():
+                    print("\n👻 Person detected! Starting interaction...")
+                    self.run_interaction()
+                    print(f"\nMonitoring resumed (cooldown: {self.cooldown_seconds}s)...")
+                else:
+                    # Print status occasionally
+                    print("Monitoring for trick-or-treaters...", end='\r')
+                    time.sleep(0.5)  # Check twice per second
+
+        except KeyboardInterrupt:
+            print("\n\nShutting down Halloween Roaster...")
+            self.cleanup()
+
+    def _run_manual(self):
+        """Manual mode: wait for user input to trigger interactions"""
         try:
             while True:
                 input("Press Enter when someone arrives (or Ctrl+C to exit)...")
@@ -252,11 +352,43 @@ class HalloweenRoaster:
 
 def main():
     """Main entry point"""
+    import argparse
+
     print("🎃 Halloween Costume Roaster 🎃")
     print("================================\n")
 
+    parser = argparse.ArgumentParser(
+        description="Halloween Costume Roaster with auto-detection",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python3 halloween_roaster.py                    # Auto-detect mode (default)
+  python3 halloween_roaster.py --manual           # Manual mode (press Enter)
+  python3 halloween_roaster.py --cooldown 90      # 90 second cooldown
+  python3 halloween_roaster.py --manual           # Disable auto-detection
+        """
+    )
+
+    parser.add_argument(
+        "--manual",
+        action="store_true",
+        help="Disable auto-detection (manual Enter key mode)"
+    )
+
+    parser.add_argument(
+        "--cooldown",
+        type=int,
+        default=60,
+        help="Cooldown seconds between detections (default: 60)"
+    )
+
+    args = parser.parse_args()
+
     try:
-        roaster = HalloweenRoaster()
+        roaster = HalloweenRoaster(
+            auto_detect=not args.manual,
+            cooldown_seconds=args.cooldown
+        )
         roaster.run()
     except KeyboardInterrupt:
         print("\n\nExiting...")
