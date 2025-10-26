@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A Raspberry Pi 5 project that uses computer vision and AI to recognize Halloween costumes, roast trick-or-treaters with witty comments, and engage in playful banter through voice interaction. Features automatic person detection using OpenCV and supports both manual and autonomous modes. Uses OpenAI's GPT-4o mini for vision analysis and conversation generation.
+A Raspberry Pi 5 project that uses computer vision and AI to recognize Halloween costumes, roast trick-or-treaters with witty comments, and engage in playful banter through voice interaction. Features automatic person detection using OpenCV and supports both manual and autonomous modes. Uses OpenAI's GPT-4o mini for vision analysis and conversation generation. Includes optional Google Drive integration to automatically save interaction traces (images + conversation logs) to the cloud for offline analysis while preserving local storage.
 
 ## Development Commands
 
@@ -29,6 +29,12 @@ python3 halloween_roaster.py --manual
 
 # Custom cooldown (seconds between detections)
 python3 halloween_roaster.py --cooldown 90
+
+# Enable Google Drive upload (saves traces to cloud, deletes local copies)
+python3 halloween_roaster.py --gdrive gdrive_credentials.json
+
+# Combined flags
+python3 halloween_roaster.py --cooldown 90 --gdrive gdrive_credentials.json
 
 # View all options
 python3 halloween_roaster.py --help
@@ -92,10 +98,24 @@ The entire application is contained in the `HalloweenRoaster` class (halloween_r
    - Up to 3 exchanges per trick-or-treater (halloween_roaster.py:274)
    - Stateless between different visitors
 
-7. **Audio Output** (halloween_roaster.py:226-252)
+7. **Audio Output** (halloween_roaster.py:246-272)
    - gTTS for text-to-speech generation
    - pygame for audio playback to Bluetooth speaker
    - Uses temporary files (auto-cleaned)
+
+8. **Trace File Generation** (halloween_roaster.py:274-299)
+   - Saves interaction data as JSON + image
+   - Timestamp-based filenames (roast_YYYYMMDD_HHMMSS)
+   - Local storage in `traces/` directory
+   - ~500 KB per interaction (image + JSON)
+
+9. **Google Drive Integration** (google_drive_uploader.py, optional)
+   - Service Account authentication
+   - Automatic folder creation/discovery
+   - Upload multiple files per interaction
+   - Automatic cleanup after successful upload
+   - Graceful fallback if upload fails
+   - Initialized only when `--gdrive` flag provided
 
 ### Interaction Flow
 
@@ -114,6 +134,41 @@ The entire application is contained in the `HalloweenRoaster` class (halloween_r
 1. Wait for user to press Enter
 2. Same interaction flow as auto-detect
 3. No cooldown enforced
+
+### Trace File Generation
+
+After each interaction, the system saves detailed logs for offline analysis:
+
+**Files Generated:**
+1. **Image**: `roast_YYYYMMDD_HHMMSS.jpg` (~400 KB)
+   - 1920x1080 JPEG of the trick-or-treater
+   - 85% quality (good balance of size/quality)
+
+2. **JSON Log**: `roast_YYYYMMDD_HHMMSS.json` (~3 KB)
+   - Timestamp (ISO 8601 format)
+   - Costume description from vision API
+   - Complete conversation history
+   - Number of exchanges
+   - Operating mode (auto/manual)
+
+**Storage Options:**
+
+1. **Local Only** (default):
+   - Files saved to `traces/` directory
+   - Must manually manage storage
+   - Use for testing or when internet is unavailable
+
+2. **Google Drive Upload** (`--gdrive` flag):
+   - Files uploaded to cloud after each interaction
+   - Local copies deleted automatically after successful upload
+   - Preserves Raspberry Pi storage
+   - Requires Google Drive service account credentials
+   - See `GOOGLE_DRIVE_SETUP.md` for detailed setup instructions
+
+**Implementation:**
+- Trace generation: halloween_roaster.py:274-299
+- Google Drive upload: halloween_roaster.py:301-335
+- Integration point: halloween_roaster.py:379-392
 
 ## Key Implementation Details
 
@@ -136,12 +191,16 @@ The entire application is contained in the `HalloweenRoaster` class (halloween_r
 - `self.last_interaction_time`: Timestamp for cooldown tracking
 - `self.auto_detect`: Boolean for mode selection
 - `self.cooldown_seconds`: Configurable cooldown duration
+- `self.drive_uploader`: GoogleDriveUploader instance (None if disabled)
+- `self.traces_dir`: Path to local traces directory (Path object)
 - Conversation history resets at start of each `run_interaction()`
 
 ### Error Handling
 - Camera/API errors are fatal (raised exceptions)
 - Speech recognition timeouts are graceful (returns None)
 - Audio errors during playback are handled with cleanup
+- Google Drive upload failures are non-fatal (keeps local files as backup)
+- Missing credentials file prints warning and continues without upload
 
 ## Customization Points
 
@@ -197,8 +256,26 @@ Run this before deploying to catch configuration issues early.
 - Virtual environment recommended to avoid system Python conflicts
 - Haar Cascade XML files included with OpenCV installation
 
+## Google Drive Configuration (Optional)
+
+For automatic trace file uploads to preserve Raspberry Pi storage:
+
+1. **Setup**: Follow complete instructions in `GOOGLE_DRIVE_SETUP.md`
+2. **Quick steps**:
+   - Create Google Cloud project
+   - Enable Drive API
+   - Create service account
+   - Download credentials JSON
+   - Share folder with your personal Gmail
+3. **Usage**: `python3 halloween_roaster.py --gdrive credentials.json`
+4. **Storage**: ~500 KB per trick-or-treater uploaded to cloud
+5. **Cleanup**: Local files deleted automatically after successful upload
+
+Without `--gdrive` flag, files remain in local `traces/` directory.
+
 ## API Key Security
 
 - Never commit API keys to repository
 - Use environment variables or .env file
-- API key validation happens at initialization (halloween_roaster.py:24-26)
+- API key validation happens at initialization (halloween_roaster.py:36-38)
+- Never commit Google Drive credentials (gdrive_credentials.json) to repository

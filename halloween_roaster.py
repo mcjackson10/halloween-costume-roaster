@@ -8,6 +8,8 @@ import os
 import time
 import base64
 import io
+import json
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
 from openai import OpenAI
@@ -19,14 +21,17 @@ from gtts import gTTS
 import tempfile
 import cv2
 import numpy as np
+from google_drive_uploader import GoogleDriveUploader
 
 class HalloweenRoaster:
-    def __init__(self, auto_detect: bool = True, cooldown_seconds: int = 60):
+    def __init__(self, auto_detect: bool = True, cooldown_seconds: int = 60,
+                 gdrive_credentials: Optional[str] = None):
         """Initialize the Halloween Roaster system
 
         Args:
             auto_detect: Enable automatic person detection (default: True)
             cooldown_seconds: Seconds to wait between detecting same person (default: 60)
+            gdrive_credentials: Path to Google Drive service account JSON (optional)
         """
         self.api_key = os.getenv("OPENAI_API_KEY")
         if not self.api_key:
@@ -38,6 +43,21 @@ class HalloweenRoaster:
         self.auto_detect = auto_detect
         self.cooldown_seconds = cooldown_seconds
         self.last_interaction_time = 0
+
+        # Google Drive integration (optional)
+        self.drive_uploader = None
+        if gdrive_credentials:
+            try:
+                print("Initializing Google Drive uploader...")
+                self.drive_uploader = GoogleDriveUploader(gdrive_credentials)
+                print(f"✓ Google Drive folder: {self.drive_uploader.get_folder_url()}")
+            except Exception as e:
+                print(f"⚠ Google Drive initialization failed: {e}")
+                print("Continuing without Google Drive upload...")
+
+        # Local trace directory
+        self.traces_dir = Path("traces")
+        self.traces_dir.mkdir(exist_ok=True)
 
         # Initialize camera
         print("Initializing camera...")
@@ -251,6 +271,69 @@ class HalloweenRoaster:
             if os.path.exists(temp_file):
                 os.unlink(temp_file)
 
+    def save_trace_files(self, pil_image: Image.Image, interaction_data: dict) -> Tuple[str, str]:
+        """Save interaction trace files locally
+
+        Args:
+            pil_image: PIL Image from interaction
+            interaction_data: Dictionary with conversation history and metadata
+
+        Returns:
+            Tuple of (image_path, json_path)
+        """
+        # Generate timestamp-based filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_filename = f"roast_{timestamp}"
+
+        # Save image
+        image_path = self.traces_dir / f"{base_filename}.jpg"
+        pil_image.save(image_path, format="JPEG", quality=85)
+        print(f"✓ Saved image: {image_path}")
+
+        # Save JSON log
+        json_path = self.traces_dir / f"{base_filename}.json"
+        with open(json_path, 'w') as f:
+            json.dump(interaction_data, f, indent=2)
+        print(f"✓ Saved trace: {json_path}")
+
+        return str(image_path), str(json_path)
+
+    def upload_and_cleanup_traces(self, image_path: str, json_path: str):
+        """Upload trace files to Google Drive and delete local copies
+
+        Args:
+            image_path: Local path to image file
+            json_path: Local path to JSON file
+        """
+        if not self.drive_uploader:
+            print("⚠ Google Drive not configured, keeping local files")
+            return
+
+        try:
+            # Upload both files
+            print("Uploading to Google Drive...")
+            results = self.drive_uploader.upload_multiple([image_path, json_path])
+
+            # Check if uploads succeeded
+            upload_success = all(file_id is not None for file_id in results.values())
+
+            if upload_success:
+                # Delete local copies
+                print("Cleaning up local files...")
+                if os.path.exists(image_path):
+                    os.unlink(image_path)
+                    print(f"✓ Deleted: {image_path}")
+                if os.path.exists(json_path):
+                    os.unlink(json_path)
+                    print(f"✓ Deleted: {json_path}")
+                print(f"✓ Files uploaded to: {self.drive_uploader.get_folder_url()}")
+            else:
+                print("⚠ Some uploads failed, keeping local files")
+
+        except Exception as e:
+            print(f"⚠ Upload error: {e}")
+            print("Keeping local files as backup")
+
     def run_interaction(self):
         """Run a single interaction: capture, roast, and allow conversation"""
         print("\n" + "="*50)
@@ -258,6 +341,7 @@ class HalloweenRoaster:
         print("="*50)
 
         # Update last interaction time for cooldown
+        interaction_timestamp = datetime.now().isoformat()
         self.last_interaction_time = time.time()
 
         # Reset conversation history for new person
@@ -271,6 +355,7 @@ class HalloweenRoaster:
         self.speak(roast)
 
         # Allow up to 3 exchanges
+        exchanges_count = 0
         for i in range(3):
             print(f"\n--- Exchange {i+1}/3 ---")
             user_speech = self.listen_for_speech(timeout=8)
@@ -287,8 +372,24 @@ class HalloweenRoaster:
             response = self.generate_response(user_speech)
             print(f"Response: {response}")
             self.speak(response)
+            exchanges_count = i + 1
 
         print("\nInteraction complete!")
+
+        # Save trace files
+        print("\nSaving trace files...")
+        interaction_data = {
+            "timestamp": interaction_timestamp,
+            "costume_description": self.current_costume,
+            "conversation_history": self.conversation_history,
+            "exchanges_count": exchanges_count,
+            "mode": "auto" if self.auto_detect else "manual"
+        }
+
+        image_path, json_path = self.save_trace_files(pil_image, interaction_data)
+
+        # Upload to Google Drive and cleanup local files
+        self.upload_and_cleanup_traces(image_path, json_path)
 
     def run(self):
         """Main run loop - supports both auto-detect and manual modes"""
@@ -362,10 +463,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python3 halloween_roaster.py                    # Auto-detect mode (default)
-  python3 halloween_roaster.py --manual           # Manual mode (press Enter)
-  python3 halloween_roaster.py --cooldown 90      # 90 second cooldown
-  python3 halloween_roaster.py --manual           # Disable auto-detection
+  python3 halloween_roaster.py                              # Auto-detect mode (default)
+  python3 halloween_roaster.py --manual                     # Manual mode (press Enter)
+  python3 halloween_roaster.py --cooldown 90                # 90 second cooldown
+  python3 halloween_roaster.py --gdrive credentials.json    # Enable Google Drive upload
         """
     )
 
@@ -382,12 +483,20 @@ Examples:
         help="Cooldown seconds between detections (default: 60)"
     )
 
+    parser.add_argument(
+        "--gdrive",
+        type=str,
+        metavar="CREDENTIALS",
+        help="Path to Google Drive service account credentials JSON file"
+    )
+
     args = parser.parse_args()
 
     try:
         roaster = HalloweenRoaster(
             auto_detect=not args.manual,
-            cooldown_seconds=args.cooldown
+            cooldown_seconds=args.cooldown,
+            gdrive_credentials=args.gdrive
         )
         roaster.run()
     except KeyboardInterrupt:

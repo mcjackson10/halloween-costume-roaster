@@ -50,3 +50,8 @@ test_*.mp3
 # Temporary files
 *.tmp
 *.log
+
+# Trace files and Google Drive credentials
+traces/
+gdrive_credentials.json
+*_credentials.json
