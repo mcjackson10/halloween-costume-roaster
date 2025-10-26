@@ -4,6 +4,9 @@ A fun Raspberry Pi 5 project that uses computer vision and AI to recognize Hallo
 
 ## Features
 
+- **Automatic Person Detection**: Uses OpenCV computer vision to continuously monitor for trick-or-treaters (~2 FPS)
+- **Intelligent Cooldown System**: Prevents re-roasting the same person (default 60s, configurable)
+- **Dual Operating Modes**: Auto-detect (default) or manual trigger mode
 - **Costume Recognition**: Uses GPT-4o mini with vision capabilities to identify and analyze costumes
 - **Witty Roasts**: Generates funny, family-friendly roasts about costumes
 - **Voice Interaction**: Listens for responses and engages in back-and-forth conversation
@@ -22,6 +25,7 @@ A fun Raspberry Pi 5 project that uses computer vision and AI to recognize Hallo
 
 - Raspberry Pi OS (64-bit recommended)
 - Python 3.9 or higher
+- OpenCV 4.8 or higher (for person detection)
 - Active internet connection (for LLM API calls and speech recognition)
 - OpenAI API key
 
@@ -77,7 +81,7 @@ sudo apt update && sudo apt upgrade -y
 sudo apt install -y python3-pip python3-picamera2 \
     portaudio19-dev python3-pyaudio \
     libcamera-dev libatlas-base-dev \
-    ffmpeg
+    ffmpeg libopencv-dev python3-opencv
 
 # Install additional audio dependencies
 sudo apt install -y pulseaudio pulseaudio-utils
@@ -131,20 +135,45 @@ python3 -c "from gtts import gTTS; import pygame; pygame.mixer.init(); tts = gTT
 
 ### Running the Program
 
+**Auto-Detect Mode (Default):**
 ```bash
+# Automatically detects when people arrive
 python3 halloween_roaster.py
+
+# With custom cooldown (default is 60 seconds)
+python3 halloween_roaster.py --cooldown 90
+```
+
+**Manual Mode:**
+```bash
+# Press Enter to trigger roasts manually
+python3 halloween_roaster.py --manual
+```
+
+**View All Options:**
+```bash
+python3 halloween_roaster.py --help
 ```
 
 ### How It Works
 
-1. **Start the program** - The system initializes camera, microphone, and speaker
+**Auto-Detect Mode (Default):**
+1. **Start the program** - System initializes camera, microphone, speaker, and person detection
+2. **Continuous monitoring** - OpenCV monitors camera feed at ~2 FPS for people
+3. **Person detected** - When someone enters the frame AND cooldown has expired:
+   - **Camera captures** a high-resolution photo of their costume
+   - **AI analyzes** the costume and generates a witty roast
+   - **Roast is spoken** through the Bluetooth speaker
+   - **System listens** for a response (8 second timeout)
+   - **If they respond**, the AI generates a comeback and banter continues (up to 3 exchanges)
+4. **Cooldown starts** - 60-second timer prevents re-roasting the same person
+5. **Resume monitoring** - System returns to watching for the next trick-or-treater
+
+**Manual Mode:**
+1. **Start the program** - System initializes camera, microphone, and speaker
 2. **Press Enter** when a trick-or-treater arrives
-3. **Camera captures** a photo of their costume
-4. **AI analyzes** the costume and generates a witty roast
-5. **Roast is spoken** through the Bluetooth speaker
-6. **System listens** for a response (8 second timeout)
-7. **If they respond**, the AI generates a comeback and the banter continues (up to 3 exchanges)
-8. **Repeat** for the next person
+3. **Same interaction flow** as auto-detect (capture, analyze, roast, converse)
+4. **Repeat** - Press Enter for the next person (no cooldown enforced)
 
 ### Example Interaction
 
@@ -202,28 +231,51 @@ alsamixer
 
 ## Customization
 
+### Person Detection Sensitivity
+
+Edit detection parameters in `halloween_roaster.py` (lines 122-127):
+
+```python
+# Adjust these values in the detect_person() method
+people = cascade.detectMultiScale(
+    gray,
+    scaleFactor=1.1,      # Lower = more sensitive (1.05-1.3)
+    minNeighbors=3,       # Lower = more detections (2-5)
+    minSize=(100, 100)    # Minimum person size in pixels
+)
+```
+
+### Cooldown Duration
+
+```bash
+# Via command line (recommended)
+python3 halloween_roaster.py --cooldown 90  # 90 seconds
+
+# Or edit default in code (halloween_roaster.py, line ~50)
+```
+
 ### Adjust Roast Style
 
 Edit the prompts in `halloween_roaster.py`:
 
 ```python
-# Line 85 - Initial roast prompt
+# Line ~158 - Initial roast prompt
 "text": "You are a snarky, witty Halloween costume critic..."
 
-# Line 127 - Conversation prompt
+# Line ~206 - Conversation prompt
 system_prompt = """You are a snarky, witty Halloween character..."""
 ```
 
 ### Change Conversation Length
 
-Modify the range in line 164:
+Modify the range in line ~274:
 ```python
 for i in range(3):  # Change 3 to desired number of exchanges
 ```
 
 ### Adjust Listening Timeout
 
-Change timeout values:
+Change timeout values (line ~276):
 ```python
 user_speech = self.listen_for_speech(timeout=8)  # Seconds to wait
 ```
@@ -260,10 +312,6 @@ Enable:
 sudo systemctl enable halloween-roaster
 sudo systemctl start halloween-roaster
 ```
-
-### Motion Detection
-
-For automatic triggering when someone approaches, you could add a PIR motion sensor and modify the code to trigger on motion instead of manual Enter press.
 
 ## Cost Considerations
 
