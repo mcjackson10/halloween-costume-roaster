@@ -1,13 +1,14 @@
 # Halloween Costume Roaster - Project Summary
 
 ## Overview
-A complete Raspberry Pi 5 system that uses AI vision and conversation to create an interactive Halloween experience. The system captures photos of trick-or-treaters' costumes, analyzes them using Claude AI, and engages in playful roasting banter through voice interaction.
+A complete Raspberry Pi 5 system that uses AI vision and conversation to create an interactive Halloween experience. The system automatically detects trick-or-treaters using computer vision, captures photos of their costumes, analyzes them using OpenAI's GPT-4o mini, and engages in playful roasting banter through voice interaction. Features automatic trace file generation with optional Google Drive integration for cloud storage.
 
 ## Project Structure
 
 ```
 Halloween/
 ├── halloween_roaster.py          # Main application (executable)
+├── google_drive_uploader.py      # Google Drive integration (optional)
 ├── test_components.py            # Component testing utility (executable)
 ├── setup.sh                      # Automated setup script (executable)
 ├── requirements.txt              # Python dependencies
@@ -16,27 +17,57 @@ Halloween/
 ├── .gitignore                    # Git ignore patterns
 ├── README.md                     # Complete documentation
 ├── QUICKSTART.md                 # Quick start guide
-└── PROJECT_SUMMARY.md            # This file
+├── PROJECT_SUMMARY.md            # This file
+├── ARCHITECTURE.md               # System architecture documentation
+├── GOOGLE_DRIVE_SETUP.md         # Google Drive setup instructions
+├── CLAUDE.md                     # Claude Code project instructions
+└── traces/                       # Local trace files (if not using Google Drive)
+    ├── roast_YYYYMMDD_HHMMSS.jpg
+    └── roast_YYYYMMDD_HHMMSS.json
 ```
 
 ## Key Features
 
-### 1. Computer Vision
-- Uses Raspberry Pi Camera Module to capture costume photos
-- Integrates with Claude 3.5 Sonnet vision capabilities
-- Analyzes costumes in real-time
+### 1. Automatic Person Detection
+- Uses OpenCV with Haar Cascade classifiers
+- Continuously monitors camera feed at ~2 FPS
+- Auto-triggers interactions when people enter frame
+- Intelligent cooldown system (default 60s, configurable)
+- Dual modes: Auto-detect (default) or manual trigger
 
-### 2. AI Conversation
+### 2. Computer Vision
+- Uses Raspberry Pi Camera Module to capture costume photos
+- Integrates with GPT-4o mini vision capabilities
+- Analyzes costumes in real-time
+- 1920x1080 high-resolution image capture
+
+### 3. AI Conversation
 - Generates witty, family-friendly roasts
 - Maintains conversation context
 - Supports up to 3 back-and-forth exchanges per person
+- Uses GPT-4o mini for cost-effective interactions
 
-### 3. Voice Interaction
+### 4. Voice Interaction
 - Speech recognition via microphone
 - Text-to-speech output via Bluetooth speaker
-- Adjustable listening timeouts
+- Adjustable listening timeouts (default 8s)
+- Google Speech Recognition for accurate transcription
 
-### 4. Hardware Integration
+### 5. Trace File Generation
+- Automatic logging of each interaction
+- Saves high-res image (~400 KB JPEG)
+- JSON conversation log (~3 KB)
+- Timestamp-based filenames for easy sorting
+- ~500 KB total storage per trick-or-treater
+
+### 6. Google Drive Integration (Optional)
+- Automatic cloud upload after each interaction
+- Preserves Raspberry Pi storage
+- Deletes local copies after successful upload
+- Graceful fallback if upload fails
+- Service account authentication
+
+### 7. Hardware Integration
 - Camera: Raspberry Pi Camera Module v2/v3
 - Audio Input: USB or compatible microphone
 - Audio Output: Bluetooth speaker
@@ -52,16 +83,20 @@ Halloween/
 
 ### Software
 - **Python 3.9+**
-- **Anthropic API** (Claude 3.5 Sonnet)
+- **OpenAI API** (GPT-4o mini)
+- **OpenCV** - Person detection with Haar Cascades
 - **picamera2** - Camera interface
 - **SpeechRecognition** - Voice input
 - **gTTS** - Text-to-speech
 - **pygame** - Audio playback
 - **PIL** - Image processing
+- **google-auth** - Google Drive authentication (optional)
+- **google-api-python-client** - Drive API integration (optional)
 
 ### External Services
-- Anthropic API for AI vision and conversation
+- OpenAI API for AI vision and conversation
 - Google Speech Recognition API for voice-to-text
+- Google Drive API for cloud storage (optional)
 
 ## Installation Steps
 
@@ -91,25 +126,43 @@ Halloween/
 
 ## Usage Flow
 
+### Auto-Detect Mode (Default)
+1. System initializes (camera, microphone, speaker, person detection)
+2. OpenCV continuously monitors camera feed at ~2 FPS
+3. When person detected AND cooldown expired:
+   - Camera captures high-res photo
+   - AI analyzes costume and generates roast
+   - Roast is spoken through speaker
+   - System listens for verbal response (8s timeout)
+   - If response detected, AI generates comeback
+   - Conversation continues (up to 3 exchanges)
+   - Trace files saved (local or Google Drive)
+4. 60-second cooldown starts
+5. System resumes monitoring for next person
+
+### Manual Mode
 1. System initializes (camera, microphone, speaker)
 2. Operator presses Enter when trick-or-treater arrives
-3. Camera captures photo
-4. AI analyzes costume and generates roast
-5. Roast is spoken through speaker
-6. System listens for verbal response (8s timeout)
-7. If response detected, AI generates comeback
-8. Conversation continues (up to 3 exchanges)
-9. System resets for next person
+3. Same interaction flow as auto-detect
+4. No cooldown enforced between interactions
 
 ## Cost Estimate
 
 ### Per Interaction (approximately)
-- Image analysis: $0.01-0.03
-- Text generation (3 responses): $0.01-0.02
-- **Total: ~$0.05-0.10 per trick-or-treater**
+Using GPT-4o mini (very cost-effective):
+- Image analysis: ~$0.0002-0.0005
+- Text generation (3 responses): ~$0.0001-0.0002 per response
+- **Total: ~$0.0007 per trick-or-treater**
+- **95% cheaper than Claude 3.5 Sonnet**
 
 ### For 100 Trick-or-Treaters
-- **Estimated cost: $5-10**
+- **Estimated API cost: ~$0.07**
+
+### Storage Costs
+- Local: Free (uses Raspberry Pi storage)
+- Google Drive: Free for most users (15 GB free tier)
+  - 100 trick-or-treaters = ~50 MB
+  - 1000 trick-or-treaters = ~500 MB
 
 ## Customization Options
 
@@ -166,17 +219,21 @@ journalctl -u halloween-roaster -f
 - Set default: `pactl set-default-sink <name>`
 
 ### API Issues
-- Verify key: `echo $ANTHROPIC_API_KEY`
-- Check credits: https://console.anthropic.com/
+- Verify key: `echo $OPENAI_API_KEY`
+- Check credits: https://platform.openai.com/usage
 - Test connection: Run `test_components.py`
 
 ## Safety & Privacy
 
-- Images are sent to Anthropic API (encrypted in transit)
-- No local image storage by default
-- Speech processed by Google API
-- Consider posting privacy notice for visitors
+- Images are sent to OpenAI API (encrypted in transit via HTTPS)
+- **Trace files**: Images and conversation logs are saved
+  - Local: Stored in `traces/` directory
+  - Cloud: Uploaded to Google Drive (if enabled)
+  - Contains: Photo, timestamp, costume description, full conversation
+- Speech processed by Google Speech Recognition API
+- **Privacy notice recommended**: Inform visitors about photo capture and data storage
 - All interactions are family-friendly by design
+- Google Drive credentials should be kept secure (never commit to Git)
 
 ## Development Notes
 
@@ -196,24 +253,54 @@ All dependencies are pure Python except:
 - Automatic retry on API failures
 - Clean shutdown on Ctrl+C
 
+## Google Drive Setup (Optional)
+
+For automatic cloud upload of trace files:
+
+1. **Create Google Cloud Project**
+   - Visit https://console.cloud.google.com/
+   - Create new project
+   - Enable Google Drive API
+
+2. **Create Service Account**
+   - Navigate to IAM & Admin > Service Accounts
+   - Create service account
+   - Download credentials JSON file
+
+3. **Share Drive Folder**
+   - Create folder in Google Drive
+   - Share with service account email
+   - Give "Editor" permissions
+
+4. **Run with Google Drive**
+   ```bash
+   python3 halloween_roaster.py --gdrive gdrive_credentials.json
+   ```
+
+See `GOOGLE_DRIVE_SETUP.md` for detailed instructions.
+
 ## Future Enhancements
 
 Potential additions:
-- [ ] Motion-activated triggering (PIR sensor)
-- [ ] Local image saving with privacy mode
-- [ ] Costume statistics/logging
+- [x] ~~Motion-activated triggering~~ (Implemented with OpenCV person detection)
+- [x] ~~Local image saving~~ (Implemented with trace files)
+- [x] ~~Costume statistics/logging~~ (Implemented with JSON trace logs)
 - [ ] Multi-language support
 - [ ] Custom sound effects
 - [ ] Web interface for monitoring
-- [ ] Photo booth mode (save and print photos)
+- [ ] Photo booth mode (print photos)
 - [ ] Candy dispenser integration
+- [ ] Real-time dashboard for viewing interactions
+- [ ] Costume category statistics and analytics
 
 ## Credits
 
-- Built with Claude AI (Anthropic)
+- Built with OpenAI's GPT-4o mini
 - Uses Google Speech Recognition
 - gTTS for text-to-speech
+- OpenCV for person detection
 - Raspberry Pi Foundation for picamera2
+- Google Drive API for cloud storage
 
 ## License
 
