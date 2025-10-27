@@ -12,6 +12,8 @@ A fun Raspberry Pi 5 project that uses computer vision and AI to recognize Hallo
 - **Voice Interaction**: Listens for responses and engages in back-and-forth conversation
 - **Audio Output**: Speaks responses through a Bluetooth speaker
 - **Camera Integration**: Captures photos using Raspberry Pi Camera Module
+- **Trace File Generation**: Automatically saves interaction logs (image + conversation JSON) for offline analysis
+- **Google Drive Integration**: Optional cloud upload of trace files to preserve Raspberry Pi storage
 
 ## Hardware Requirements
 
@@ -142,12 +144,21 @@ python3 halloween_roaster.py
 
 # With custom cooldown (default is 60 seconds)
 python3 halloween_roaster.py --cooldown 90
+
+# With Google Drive upload (saves traces to cloud, deletes local copies)
+python3 halloween_roaster.py --gdrive gdrive_credentials.json
+
+# Combined flags
+python3 halloween_roaster.py --cooldown 90 --gdrive gdrive_credentials.json
 ```
 
 **Manual Mode:**
 ```bash
 # Press Enter to trigger roasts manually
 python3 halloween_roaster.py --manual
+
+# Manual mode with Google Drive
+python3 halloween_roaster.py --manual --gdrive gdrive_credentials.json
 ```
 
 **View All Options:**
@@ -166,13 +177,14 @@ python3 halloween_roaster.py --help
    - **Roast is spoken** through the Bluetooth speaker
    - **System listens** for a response (8 second timeout)
    - **If they respond**, the AI generates a comeback and banter continues (up to 3 exchanges)
+   - **Trace files saved** - Image and conversation log stored locally (or uploaded to Google Drive if enabled)
 4. **Cooldown starts** - 60-second timer prevents re-roasting the same person
 5. **Resume monitoring** - System returns to watching for the next trick-or-treater
 
 **Manual Mode:**
 1. **Start the program** - System initializes camera, microphone, and speaker
 2. **Press Enter** when a trick-or-treater arrives
-3. **Same interaction flow** as auto-detect (capture, analyze, roast, converse)
+3. **Same interaction flow** as auto-detect (capture, analyze, roast, converse, save traces)
 4. **Repeat** - Press Enter for the next person (no cooldown enforced)
 
 ### Example Interaction
@@ -280,6 +292,69 @@ Change timeout values (line ~276):
 user_speech = self.listen_for_speech(timeout=8)  # Seconds to wait
 ```
 
+## Trace Files and Cloud Storage
+
+### What Are Trace Files?
+
+After each interaction, the system automatically saves detailed logs for offline analysis:
+
+**Files Generated:**
+- **Image**: `roast_YYYYMMDD_HHMMSS.jpg` (~400 KB)
+  - 1920x1080 JPEG of the trick-or-treater
+  - 85% quality (good balance of size/quality)
+
+- **JSON Log**: `roast_YYYYMMDD_HHMMSS.json` (~3 KB)
+  - Timestamp (ISO 8601 format)
+  - Costume description from vision API
+  - Complete conversation history
+  - Number of exchanges
+  - Operating mode (auto/manual)
+
+**Total storage: ~500 KB per trick-or-treater**
+
+### Storage Options
+
+**1. Local Storage (Default)**
+```bash
+# Files saved to traces/ directory
+python3 halloween_roaster.py
+```
+- Files remain on Raspberry Pi
+- Must manually manage storage
+- Good for testing or when internet is unavailable
+
+**2. Google Drive Upload (Recommended for Halloween Night)**
+```bash
+# Automatically upload to cloud and delete local copies
+python3 halloween_roaster.py --gdrive gdrive_credentials.json
+```
+- Files uploaded to Google Drive after each interaction
+- Local copies deleted automatically after successful upload
+- Preserves Raspberry Pi storage (important for long nights!)
+- Requires one-time Google Drive setup (see below)
+
+### Google Drive Setup (Optional)
+
+For automatic trace file uploads to preserve Raspberry Pi storage:
+
+**Quick Steps:**
+1. Follow complete instructions in `GOOGLE_DRIVE_SETUP.md`
+2. Create Google Cloud project and enable Drive API
+3. Create service account and download credentials JSON
+4. Share a Google Drive folder with the service account email
+5. Run with `--gdrive gdrive_credentials.json` flag
+
+**Benefits:**
+- Preserves Raspberry Pi storage on busy Halloween nights
+- Access trace files from any device
+- Automatic backup of all interactions
+- Graceful fallback if upload fails (keeps local files)
+
+**Security Note:**
+- Never commit `gdrive_credentials.json` to Git
+- Keep credentials file secure (contains API access)
+- Service account only has access to shared folder
+
 ## Advanced Configuration
 
 ### Auto-start on Boot
@@ -326,8 +401,12 @@ sudo systemctl start halloween-roaster
 
 - Images are sent to OpenAI's API for analysis
 - Consider adding a privacy notice for visitors
-- Images are not saved locally by default
+- **Trace files**: Images and conversation logs are saved locally or uploaded to Google Drive
+  - Local: Stored in `traces/` directory (~500 KB per visitor)
+  - Cloud: Uploaded to Google Drive and local copies deleted
+  - Contains: Photo, timestamp, costume description, conversation
 - Speech is processed by Google's Speech Recognition API
+- **Privacy considerations**: Inform visitors about photo capture and data storage
 
 ## License
 
