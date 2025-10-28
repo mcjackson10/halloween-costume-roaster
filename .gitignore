@@ -51,7 +51,5 @@ test_*.mp3
 *.tmp
 *.log
 
-# Trace files and Google Drive credentials
+# Trace files
 traces/
-gdrive_credentials.json
-*_credentials.json
