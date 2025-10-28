@@ -8,6 +8,7 @@ gTTS>=2.5.0
 PyAudio>=0.2.14
 opencv-python>=4.8.0
 numpy>=1.24.0
+python-dotenv>=1.0.0
 
 # Google Drive integration for trace file uploads
 google-api-python-client>=2.100.0

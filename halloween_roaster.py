@@ -12,6 +12,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
+from dotenv import load_dotenv
 from openai import OpenAI
 from picamera2 import Picamera2
 from PIL import Image
@@ -22,6 +23,9 @@ import tempfile
 import cv2
 import numpy as np
 from google_drive_uploader import GoogleDriveUploader
+
+# Load environment variables from .env file
+load_dotenv()
 
 class HalloweenRoaster:
     def __init__(self, auto_detect: bool = True, cooldown_seconds: int = 60,
