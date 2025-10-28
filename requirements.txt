@@ -4,7 +4,6 @@ picamera2>=0.3.18
 pillow>=10.0.0
 SpeechRecognition>=3.10.0
 pygame>=2.5.0
-gTTS>=2.5.0
 PyAudio>=0.2.14
 opencv-python>=4.8.0
 numpy>=1.24.0

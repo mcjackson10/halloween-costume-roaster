@@ -18,7 +18,6 @@ from picamera2 import Picamera2
 from PIL import Image
 import speech_recognition as sr
 import pygame
-from gtts import gTTS
 import tempfile
 import cv2
 import numpy as np
@@ -165,7 +164,7 @@ class HalloweenRoaster:
                         },
                         {
                             "type": "text",
-                            "text": "You are a snarky, witty Halloween costume critic. Look at this person's costume and: 1) Identify what they're dressed as, 2) Give them a hilarious, playful roast about their costume (keep it fun and family-friendly, not mean-spirited). Be creative and funny! Keep your response under 3 sentences."
+                            "text": "You are a snarky, witty Halloween costume critic. Look at this person's costume and first say what they're dressed as, then give them a playful, funny roast about it. Keep it light, family-friendly, and under three sentences. Write in a natural speaking style that sounds smooth and entertaining when read aloud. Do not use numbers, lists, or labels—just deliver it like a quick joke to the trick-or-treater."
                         }
                     ],
                 }
@@ -242,9 +241,13 @@ class HalloweenRoaster:
             temp_file = fp.name
 
         try:
-            # Generate speech
-            tts = gTTS(text=text, lang='en', slow=False)
-            tts.save(temp_file)
+            # Generate speech using OpenAI TTS with onyx voice (deep, spooky)
+            response = self.client.audio.speech.create(
+                model="tts-1",  # Faster model for real-time use
+                voice="onyx",   # Deep masculine voice for Halloween
+                input=text
+            )
+            response.stream_to_file(temp_file)
 
             # Play audio
             pygame.mixer.music.load(temp_file)
