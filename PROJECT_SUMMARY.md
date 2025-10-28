@@ -1,14 +1,13 @@
 # Halloween Costume Roaster - Project Summary
 
 ## Overview
-A complete Raspberry Pi 5 system that uses AI vision and conversation to create an interactive Halloween experience. The system automatically detects trick-or-treaters using computer vision, captures photos of their costumes, analyzes them using OpenAI's GPT-4o mini, and engages in playful roasting banter through voice interaction. Features automatic trace file generation with optional Google Drive integration for cloud storage.
+A complete Raspberry Pi 5 system that uses AI vision and conversation to create an interactive Halloween experience. The system automatically detects trick-or-treaters using computer vision, captures photos of their costumes, analyzes them using OpenAI's GPT-4o mini, and engages in playful roasting banter through voice interaction. Features automatic trace file generation that saves interaction logs locally for offline analysis.
 
 ## Project Structure
 
 ```
 Halloween/
 ├── halloween_roaster.py          # Main application (executable)
-├── google_drive_uploader.py      # Google Drive integration (optional)
 ├── test_components.py            # Component testing utility (executable)
 ├── setup.sh                      # Automated setup script (executable)
 ├── requirements.txt              # Python dependencies
@@ -19,9 +18,8 @@ Halloween/
 ├── QUICKSTART.md                 # Quick start guide
 ├── PROJECT_SUMMARY.md            # This file
 ├── ARCHITECTURE.md               # System architecture documentation
-├── GOOGLE_DRIVE_SETUP.md         # Google Drive setup instructions
 ├── CLAUDE.md                     # Claude Code project instructions
-└── traces/                       # Local trace files (if not using Google Drive)
+└── traces/                       # Local trace files
     ├── roast_YYYYMMDD_HHMMSS.jpg
     └── roast_YYYYMMDD_HHMMSS.json
 ```
@@ -49,7 +47,7 @@ Halloween/
 
 ### 4. Voice Interaction
 - Speech recognition via microphone
-- Text-to-speech output via Bluetooth speaker
+- High-quality text-to-speech using OpenAI TTS (onyx voice for spooky effect)
 - Adjustable listening timeouts (default 8s)
 - Google Speech Recognition for accurate transcription
 
@@ -58,16 +56,10 @@ Halloween/
 - Saves high-res image (~400 KB JPEG)
 - JSON conversation log (~3 KB)
 - Timestamp-based filenames for easy sorting
+- Local storage in `traces/` directory
 - ~500 KB total storage per trick-or-treater
 
-### 6. Google Drive Integration (Optional)
-- Automatic cloud upload after each interaction
-- Preserves Raspberry Pi storage
-- Deletes local copies after successful upload
-- Graceful fallback if upload fails
-- Service account authentication
-
-### 7. Hardware Integration
+### 6. Hardware Integration
 - Camera: Raspberry Pi Camera Module v2/v3
 - Audio Input: USB or compatible microphone
 - Audio Output: Bluetooth speaker
@@ -83,20 +75,17 @@ Halloween/
 
 ### Software
 - **Python 3.9+**
-- **OpenAI API** (GPT-4o mini)
+- **OpenAI API** (GPT-4o mini for vision/conversation, TTS-1 for voice)
 - **OpenCV** - Person detection with Haar Cascades
 - **picamera2** - Camera interface
 - **SpeechRecognition** - Voice input
-- **gTTS** - Text-to-speech
 - **pygame** - Audio playback
 - **PIL** - Image processing
-- **google-auth** - Google Drive authentication (optional)
-- **google-api-python-client** - Drive API integration (optional)
+- **python-dotenv** - Environment variable management
 
 ### External Services
-- OpenAI API for AI vision and conversation
+- OpenAI API for AI vision, conversation, and text-to-speech
 - Google Speech Recognition API for voice-to-text
-- Google Drive API for cloud storage (optional)
 
 ## Installation Steps
 
@@ -112,7 +101,7 @@ Halloween/
 
 3. **Configuration**
    - Copy `.env.example` to `.env`
-   - Add Anthropic API key
+   - Add OpenAI API key
 
 4. **Testing**
    ```bash
@@ -136,7 +125,7 @@ Halloween/
    - System listens for verbal response (8s timeout)
    - If response detected, AI generates comeback
    - Conversation continues (up to 3 exchanges)
-   - Trace files saved (local or Google Drive)
+   - Trace files saved locally
 4. 60-second cooldown starts
 5. System resumes monitoring for next person
 
@@ -149,18 +138,17 @@ Halloween/
 ## Cost Estimate
 
 ### Per Interaction (approximately)
-Using GPT-4o mini (very cost-effective):
-- Image analysis: ~$0.0002-0.0005
-- Text generation (3 responses): ~$0.0001-0.0002 per response
-- **Total: ~$0.0007 per trick-or-treater**
-- **95% cheaper than Claude 3.5 Sonnet**
+Using OpenAI APIs (very cost-effective):
+- Image analysis (GPT-4o mini): ~$0.0002-0.0005
+- Text generation (GPT-4o mini, 3 responses): ~$0.0001-0.0002 per response
+- Text-to-speech (TTS-1, ~4 audio clips): ~$0.00006 per clip
+- **Total: ~$0.001 per trick-or-treater**
 
 ### For 100 Trick-or-Treaters
-- **Estimated API cost: ~$0.07**
+- **Estimated API cost: ~$0.10**
 
 ### Storage Costs
 - Local: Free (uses Raspberry Pi storage)
-- Google Drive: Free for most users (15 GB free tier)
   - 100 trick-or-treaters = ~50 MB
   - 1000 trick-or-treaters = ~500 MB
 
@@ -226,14 +214,14 @@ journalctl -u halloween-roaster -f
 ## Safety & Privacy
 
 - Images are sent to OpenAI API (encrypted in transit via HTTPS)
-- **Trace files**: Images and conversation logs are saved
-  - Local: Stored in `traces/` directory
-  - Cloud: Uploaded to Google Drive (if enabled)
+- **Trace files**: Images and conversation logs are saved locally
+  - Stored in `traces/` directory
   - Contains: Photo, timestamp, costume description, full conversation
 - Speech processed by Google Speech Recognition API
+- Audio generated using OpenAI TTS API
 - **Privacy notice recommended**: Inform visitors about photo capture and data storage
 - All interactions are family-friendly by design
-- Google Drive credentials should be kept secure (never commit to Git)
+- API keys should be kept secure (never commit to Git)
 
 ## Development Notes
 
@@ -253,32 +241,6 @@ All dependencies are pure Python except:
 - Automatic retry on API failures
 - Clean shutdown on Ctrl+C
 
-## Google Drive Setup (Optional)
-
-For automatic cloud upload of trace files:
-
-1. **Create Google Cloud Project**
-   - Visit https://console.cloud.google.com/
-   - Create new project
-   - Enable Google Drive API
-
-2. **Create Service Account**
-   - Navigate to IAM & Admin > Service Accounts
-   - Create service account
-   - Download credentials JSON file
-
-3. **Share Drive Folder**
-   - Create folder in Google Drive
-   - Share with service account email
-   - Give "Editor" permissions
-
-4. **Run with Google Drive**
-   ```bash
-   python3 halloween_roaster.py --gdrive gdrive_credentials.json
-   ```
-
-See `GOOGLE_DRIVE_SETUP.md` for detailed instructions.
-
 ## Future Enhancements
 
 Potential additions:
@@ -295,12 +257,10 @@ Potential additions:
 
 ## Credits
 
-- Built with OpenAI's GPT-4o mini
+- Built with OpenAI's GPT-4o mini and TTS-1
 - Uses Google Speech Recognition
-- gTTS for text-to-speech
 - OpenCV for person detection
 - Raspberry Pi Foundation for picamera2
-- Google Drive API for cloud storage
 
 ## License
 
