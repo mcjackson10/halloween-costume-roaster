@@ -34,9 +34,6 @@
                             │                  │
                             │  • Google Speech │
                             │    Recognition   │
-                            │                  │
-                            │  • Google Drive  │
-                            │    API (optional)│
                             └──────────────────┘
                                      ▲
                                      │
@@ -45,7 +42,6 @@
                             │  (.jpg + .json)  │
                             │                  │
                             │ Local: traces/   │
-                            │ Cloud: G Drive   │
                             └──────────────────┘
 ```
 
@@ -123,7 +119,7 @@
           ▼
    ┌─────────────────┐
    │  Text-to-Speech │
-   │     (gTTS)      │
+   │  (OpenAI TTS-1) │
    └────────┬────────┘
             │
             ▼
@@ -197,46 +193,18 @@
    └────────┬────────┘
             │
             ▼
-      ┌────┴─────┐
-      │ --gdrive │
-      │  flag?   │
-      └────┬─────┘
-           │
-      Yes──┼──No
-           │   │
-           │   └──────────────────┐
-           ▼                      │
-6. GOOGLE DRIVE UPLOAD            │
-   ┌─────────────────┐            │
-   │ Upload to       │            │
-   │ Google Drive    │            │
-   │ • Image file    │            │
-   │ • JSON file     │            │
-   └────────┬────────┘            │
-            │                     │
-            ▼                     │
-   ┌─────────────────┐            │
-   │ Upload success? │            │
-   └────────┬────────┘            │
-            │                     │
-       Yes──┼──No                 │
-            │   │                 │
-            │   └──(keep local)   │
-            ▼                     │
-   ┌─────────────────┐            │
-   │ Delete local    │            │
-   │ copies          │            │
-   └────────┬────────┘            │
-            │                     │
-            └─────────────────────┘
-                      │
-                      ▼
-            ┌──────────────────┐
-            │ Start cooldown   │
-            │ (auto-detect)    │
-            │ or wait for      │
-            │ Enter (manual)   │
-            └──────────────────┘
+   ┌─────────────────┐
+   │ Save to local   │
+   │ traces/ folder  │
+   └────────┬────────┘
+            │
+            ▼
+   ┌─────────────────┐
+   │ Start cooldown  │
+   │ (auto-detect)   │
+   │ or wait for     │
+   │ Enter (manual)  │
+   └─────────────────┘
 ```
 
 ## Class Structure
@@ -244,15 +212,14 @@
 ```
 HalloweenRoaster
 │
-├─── __init__(auto_detect, cooldown, drive_uploader)
+├─── __init__(auto_detect, cooldown)
 │    ├─ Initialize OpenAI client
 │    ├─ Initialize camera (Picamera2)
 │    ├─ Initialize speech recognition
 │    ├─ Initialize audio playback (pygame)
 │    ├─ Initialize person detection (OpenCV Haar Cascade)
 │    ├─ Set up conversation context
-│    ├─ Create traces directory
-│    └─ Store Google Drive uploader (if provided)
+│    └─ Create traces directory
 │
 ├─── capture_image()
 │    ├─ Capture from camera (1920x1080)
@@ -285,27 +252,21 @@ HalloweenRoaster
 │    └─ Get witty comeback
 │
 ├─── speak(text)
-│    ├─ Convert text to speech (gTTS)
+│    ├─ Convert text to speech (OpenAI TTS-1)
 │    ├─ Save to temp file
 │    ├─ Play via pygame
 │    └─ Clean up temp file
 │
 ├─── save_trace_files(image, costume, timestamp)
-│    ├─ Save JPEG image (85% quality)
+│    ├─ Save JPEG image (85% quality) to traces/
 │    ├─ Create JSON log with metadata
 │    └─ Return file paths
-│
-├─── upload_to_drive(image_path, json_path)
-│    ├─ Upload both files to Google Drive
-│    ├─ Delete local copies if successful
-│    └─ Keep local copies if upload fails
 │
 ├─── run_interaction()
 │    ├─ Capture & analyze costume
 │    ├─ Speak initial roast
 │    ├─ Handle 3 conversation exchanges
-│    ├─ Save trace files
-│    └─ Upload to Google Drive (if enabled)
+│    └─ Save trace files locally
 │
 ├─── run()
 │    ├─ Main loop
@@ -316,26 +277,6 @@ HalloweenRoaster
      ├─ Stop camera
      ├─ Stop person detection
      └─ Quit audio
-
-GoogleDriveUploader (separate class)
-│
-├─── __init__(credentials_file)
-│    ├─ Load service account credentials
-│    └─ Build Drive API client
-│
-├─── find_or_create_folder(folder_name)
-│    ├─ Search for existing folder
-│    └─ Create if not found
-│
-├─── upload_file(file_path, folder_id)
-│    ├─ Read file content
-│    ├─ Upload to Google Drive
-│    └─ Return success status
-│
-└─── upload_files(files, folder_name)
-     ├─ Find/create folder
-     ├─ Upload each file
-     └─ Return success status
 ```
 
 ## State Machine
@@ -421,23 +362,8 @@ GoogleDriveUploader (separate class)
 ┌──────────────┐                        │
 │ SAVING TRACE │                        │
 │    FILES     │                        │
+│   (locally)  │                        │
 └──────┬───────┘                        │
-       │                                │
-       ▼                                │
-    ┌──────┐                            │
-    │GDrive│                            │
-    │ on?  │                            │
-    └──┬───┘                            │
-       │                                │
-  Yes──┼──No───────────┐                │
-       │               │                │
-       ▼               │                │
-┌──────────────┐       │                │
-│  UPLOADING   │       │                │
-│ (Google Drive)│      │                │
-└──────┬───────┘       │                │
-       │               │                │
-       └───────────────┘                │
        │                                │
        ▼                                │
 ┌──────────────┐                        │
@@ -467,6 +393,7 @@ GoogleDriveUploader (separate class)
 ## API Integration
 
 ### OpenAI API
+**GPT-4o mini (Vision & Text)**
 - **Model**: gpt-4o-mini
 - **Vision**: Multimodal input (image + text)
 - **Max Tokens**: 1024 per response
@@ -474,6 +401,15 @@ GoogleDriveUploader (separate class)
 - **Usage**:
   - Initial costume analysis (1 call per person)
   - Conversation responses (1 call per exchange)
+
+**TTS-1 (Text-to-Speech)**
+- **Model**: tts-1
+- **Voice**: onyx (deep, spooky voice)
+- **Pricing**: $15/M characters (~$0.00006 per typical response)
+- **Usage**:
+  - Initial roast
+  - Conversation responses
+  - Farewell message
 
 ### Google Speech Recognition API
 - **Service**: Google Speech Recognition
@@ -489,19 +425,17 @@ GoogleDriveUploader (separate class)
 - Image encoding: ~0.2s
 - API request (vision): ~2-4s
 - API request (text): ~1-2s
-- TTS generation: ~1-2s
+- TTS generation (OpenAI): ~0.5-1.5s
 - Audio playback: ~2-5s (varies by text length)
 - Speech recognition: Up to 8s timeout
 - Trace file saving: ~0.5-1s
-- Google Drive upload: ~2-5s (depends on network)
 
 ### Total Interaction Time
 - Initial roast: ~5-10s
 - Each exchange: ~10-15s
 - Full interaction (3 exchanges): ~30-60s
 - Trace file generation: ~1s
-- Google Drive upload: ~2-5s (if enabled)
-- **Total with Google Drive**: ~35-70s
+- **Total**: ~30-65s
 
 ### Resource Usage
 - Memory: ~200-400MB (includes OpenCV)
@@ -509,12 +443,10 @@ GoogleDriveUploader (separate class)
   - Moderate during API calls and audio processing
   - Low during person detection monitoring
 - Network:
-  - API calls: ~100-500KB per interaction
-  - Google Drive upload: ~500KB per interaction (if enabled)
+  - API calls: ~100-500KB per interaction (includes TTS audio download)
 - Storage:
-  - Local (no --gdrive): ~500KB per trick-or-treater
-  - Cloud (with --gdrive): ~0KB local (files deleted after upload)
-  - Temp files: ~1-2MB (audio files, auto-cleaned)
+  - Local: ~500KB per trick-or-treater
+  - Temp files: ~500KB-1MB (audio files, auto-cleaned)
 
 ## Error Handling
 
@@ -562,18 +494,16 @@ GoogleDriveUploader (separate class)
 ### Data Privacy
 - Images sent to OpenAI API (encrypted HTTPS)
 - Audio sent to Google Speech API (encrypted HTTPS)
+- TTS audio generated via OpenAI API (encrypted HTTPS)
 - **Trace files contain sensitive data**:
   - Photos of trick-or-treaters
   - Full conversation transcripts
   - Timestamps and costume descriptions
 - **Local storage**: Files in `traces/` directory (world-readable by default)
-- **Cloud storage**: Files uploaded to Google Drive (encrypted in transit)
-- API keys stored in environment variables
-- **Google Drive credentials**: Service account JSON file (keep secure!)
+- API keys stored in environment variables (.env file)
 
 ### Network Security
 - All API calls over HTTPS
-- Google Drive API uses OAuth 2.0 service account
 - No incoming network connections
 - Bluetooth uses standard pairing
 
@@ -584,15 +514,14 @@ GoogleDriveUploader (separate class)
 - Trace files persist (local or cloud)
 
 ### Best Practices
-- Never commit API keys or credentials to Git
+- Never commit API keys to Git
 - Set appropriate file permissions on trace files
 - Use `.gitignore` to exclude:
   - `.env` files
   - `traces/` directory
-  - `gdrive_credentials.json`
 - Consider data retention policy for trace files
 - Inform visitors about photo capture and storage
-- Regularly clean up old trace files (if using local storage)
+- Regularly clean up old trace files to manage storage
 
 ---
 
