@@ -21,6 +21,7 @@ import pygame
 import tempfile
 import cv2
 import numpy as np
+import sys
 
 # Load environment variables from .env file
 load_dotenv()
@@ -59,18 +60,41 @@ class HalloweenRoaster:
         self.camera.start()
         time.sleep(2)  # Let camera warm up
 
-        # Initialize person detection (Haar Cascade)
+        # Initialize two-stage person detection system
         if self.auto_detect:
-            print("Loading person detection model...")
-            # Using upper body detector as it works better for costumes
-            cascade_path = cv2.data.haarcascades + 'haarcascade_fullbody.xml'
-            self.person_cascade = cv2.CascadeClassifier(cascade_path)
-            if self.person_cascade.empty():
-                print("Warning: Full body cascade not found, trying upper body...")
-                cascade_path = cv2.data.haarcascades + 'haarcascade_upperbody.xml'
-                self.person_cascade = cv2.CascadeClassifier(cascade_path)
-            if self.person_cascade.empty():
-                raise ValueError("Could not load person detection cascade")
+            print("Initializing two-stage person detection...")
+
+            # Stage 1: Motion detection (filters static objects)
+            print("  - Setting up motion detector...")
+            self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(
+                history=500,           # Number of frames for background model
+                varThreshold=16,       # Threshold for pixel variance (lower = more sensitive)
+                detectShadows=False    # Disable shadow detection to avoid false positives
+            )
+            self.motion_threshold = 5000  # Minimum contour area in pixels to consider as motion
+
+            # Stage 2: YOLO11 person detector
+            print("  - Loading YOLO11n person detection model...")
+            from ultralytics import YOLO
+
+            # Load YOLO11n (nano) model - will auto-download on first run (~6 MB)
+            self.person_model = YOLO('yolo11n.pt')
+
+            # Export to NCNN format for optimized CPU inference on Raspberry Pi
+            print("  - Optimizing model for Raspberry Pi (NCNN format)...")
+            try:
+                self.person_model.export(format='ncnn', imgsz=320)
+                # Load the optimized NCNN model
+                self.person_model = YOLO('yolo11n_ncnn_model', task='detect')
+                print("  - Using optimized NCNN model for best performance")
+            except Exception as e:
+                print(f"  - NCNN export failed ({e}), using standard model")
+                # Fall back to standard PyTorch model if NCNN export fails
+                pass
+
+            # Detection threshold (0.0-1.0, lower = more sensitive)
+            self.person_confidence_threshold = 0.4
+            print("✓ Two-stage detection initialized (Motion + YOLO11n)")
 
         # Initialize speech recognition
         print("Initializing speech recognition...")
@@ -84,7 +108,17 @@ class HalloweenRoaster:
 
         # Initialize audio playback (for bluetooth speaker)
         print("Initializing audio playback...")
-        pygame.mixer.init()
+        # Suppress JACK/ALSA error messages during pygame audio initialization
+        # pygame probes multiple audio backends and devices, generating errors for unavailable ones
+        stderr_backup = sys.stderr
+        try:
+            sys.stderr = open(os.devnull, 'w')
+            # Set SDL audio driver preference to PulseAudio (what Raspberry Pi uses)
+            os.environ.setdefault('SDL_AUDIODRIVER', 'pulseaudio')
+            pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=512)
+        finally:
+            sys.stderr.close()
+            sys.stderr = stderr_backup
 
         # Conversation context
         self.conversation_history = []
@@ -111,31 +145,69 @@ class HalloweenRoaster:
 
         return pil_image, image_base64
 
-    def detect_person(self) -> bool:
-        """Detect if a person is present in the camera frame
+    def detect_motion(self) -> bool:
+        """Stage 1: Fast motion detection to filter static objects
 
         Returns:
-            True if person detected, False otherwise
+            True if significant motion detected, False otherwise
         """
-        # Capture low-res frame for detection (faster processing)
+        # Capture low-res frame for motion detection
         image_array = self.camera.capture_array()
 
         # Convert RGB to BGR for OpenCV
         bgr_image = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
 
-        # Convert to grayscale for detection
-        gray = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2GRAY)
+        # Apply background subtraction
+        fg_mask = self.bg_subtractor.apply(bgr_image)
 
-        # Detect people using Haar Cascade
-        # Parameters tuned for detecting trick-or-treaters at door
-        people = self.person_cascade.detectMultiScale(
-            gray,
-            scaleFactor=1.1,
-            minNeighbors=3,
-            minSize=(100, 100)  # Minimum size to avoid false positives
+        # Find contours in the foreground mask
+        contours, _ = cv2.findContours(
+            fg_mask,
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE
         )
 
-        return len(people) > 0
+        # Check if any contour is large enough to be considered motion
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if area > self.motion_threshold:
+                return True
+
+        return False
+
+    def detect_person(self) -> bool:
+        """Two-stage person detection: motion first, then YOLO verification
+
+        Stage 1: Fast motion detection filters out static objects (trees, decorations)
+        Stage 2: YOLO11n verifies that motion is actually a person
+
+        Returns:
+            True if person detected, False otherwise
+        """
+        # Stage 1: Check for motion (fast pre-filter)
+        if not self.detect_motion():
+            return False
+
+        # Stage 2: Verify it's a person using YOLO11n
+        image_array = self.camera.capture_array()
+
+        # Run YOLO detection
+        results = self.person_model(
+            image_array,
+            conf=self.person_confidence_threshold,
+            classes=[0],  # Only detect 'person' class (class 0 in COCO dataset)
+            verbose=False,  # Suppress output
+            imgsz=320  # Input size for inference (balance speed/accuracy)
+        )
+
+        # Check if any person was detected
+        if len(results[0].boxes) > 0:
+            # Get highest confidence detection
+            confidence = results[0].boxes[0].conf[0].item()
+            print(f"  ✓ Person detected (confidence: {confidence:.2%})")
+            return True
+
+        return False
 
     def is_cooldown_active(self) -> bool:
         """Check if we're still in cooldown period from last interaction"""
@@ -164,7 +236,7 @@ class HalloweenRoaster:
                         },
                         {
                             "type": "text",
-                            "text": "You are the all powerful Halloween Wizard of Oz, a snarky and witty costume critic. Start by introducing yourself: 'I'm the all powerful Halloween Wizard of Oz!' Then look at this person's costume and say what they're dressed as, followed by a playful, funny roast about it. Keep it light, family-friendly, and under four sentences total. Write in a natural speaking style that sounds smooth and entertaining when read aloud. Do not use numbers, lists, or labels—just deliver it like a quick joke to the trick-or-treater."
+                            "text": "You are the all powerful Halloween Wizard of Oz, a snarky and witty costume critic. Start by introducing yourself: 'I'm the all powerful Halloween Wizard of Oz!' Then look at this person's costume and say what they're dressed as, followed by a playful, funny roast about it. IMPORTANT: Only comment on the person or people in the frame and their costumes. Completely ignore any background elements like trees, flags, picture frames, decorations, or other objects - focus exclusively on the people and what they're wearing. Keep it light, family-friendly, and under four sentences total. Write in a natural speaking style that sounds smooth and entertaining when read aloud. Do not use numbers, lists, or labels—just deliver it like a quick joke to the trick-or-treater."
                         }
                     ],
                 }
@@ -214,7 +286,8 @@ class HalloweenRoaster:
 
         system_prompt = """You are the all powerful Halloween Wizard of Oz, a snarky, witty Halloween character who just roasted someone's costume.
         They're talking back to you! Continue the playful banter. Keep it fun, family-friendly, and hilarious.
-        You can reference their costume and what they say. Speak with the confidence and authority of the all powerful Halloween Wizard of Oz. Keep responses under 3 sentences so they're quick and punchy."""
+        You can reference their costume and what they say. IMPORTANT: Only comment on the person or people and their costumes. Never mention background elements like trees, flags, picture frames, or decorations - focus exclusively on the people and their outfits.
+        Speak with the confidence and authority of the all powerful Halloween Wizard of Oz. Keep responses under 3 sentences so they're quick and punchy."""
 
         response = self.client.chat.completions.create(
             model="gpt-4o-mini",
