@@ -27,9 +27,12 @@ Halloween/
 ## Key Features
 
 ### 1. Automatic Person Detection
-- Uses OpenCV with Haar Cascade classifiers
+- Two-stage detection system for optimal accuracy:
+  - **Stage 1**: Motion detection (filters static objects like trees/decorations)
+  - **Stage 2**: YOLO11n person verification (AI-powered)
+- YOLO11n optimized for Raspberry Pi (NCNN format for CPU inference)
 - Continuously monitors camera feed at ~2 FPS
-- Auto-triggers interactions when people enter frame
+- Auto-triggers interactions when people detected
 - Intelligent cooldown system (default 60s, configurable)
 - Dual modes: Auto-detect (default) or manual trigger
 
@@ -76,7 +79,8 @@ Halloween/
 ### Software
 - **Python 3.9+**
 - **OpenAI API** (GPT-4o mini for vision/conversation, TTS-1 for voice)
-- **OpenCV** - Person detection with Haar Cascades
+- **OpenCV** - Motion detection with background subtraction
+- **Ultralytics YOLO11n** - AI-powered person detection
 - **picamera2** - Camera interface
 - **SpeechRecognition** - Voice input
 - **pygame** - Audio playback
@@ -116,8 +120,10 @@ Halloween/
 ## Usage Flow
 
 ### Auto-Detect Mode (Default)
-1. System initializes (camera, microphone, speaker, person detection)
-2. OpenCV continuously monitors camera feed at ~2 FPS
+1. System initializes (camera, microphone, speaker, two-stage person detection)
+2. Two-stage detection continuously monitors camera feed at ~2 FPS:
+   - Motion detector filters out static objects
+   - YOLO11n verifies motion is actually a person
 3. When person detected AND cooldown expired:
    - Camera captures high-res photo
    - AI analyzes costume and generates roast
@@ -156,20 +162,20 @@ Using OpenAI APIs (very cost-effective):
 
 ### Personality/Tone
 Edit prompts in `halloween_roaster.py`:
-- Line 85: Initial roast prompt
-- Line 127: Conversation system prompt
+- halloween_roaster.py:239 - Initial roast prompt
+- halloween_roaster.py:287-290 - Conversation system prompt
 
 ### Interaction Length
-- Modify `for i in range(3)` on line 164
-- Adjust timeout in `listen_for_speech()` calls
+- Modify `for i in range(3)` at halloween_roaster.py:390
+- Adjust timeout in `listen_for_speech()` calls at halloween_roaster.py:392
 
 ### Camera Settings
-- Resolution: Line 38-39
-- Warm-up time: Line 42
+- Resolution: halloween_roaster.py:55-58
+- Warm-up time: halloween_roaster.py:61
 
 ### Audio Settings
-- Speech timeout: Line 107
-- Phrase time limit: Line 107
+- Speech timeout: halloween_roaster.py:392
+- Phrase time limit: halloween_roaster.py:261
 
 ## Advanced Features
 
@@ -233,7 +239,8 @@ The application is designed for Raspberry Pi but includes graceful handling:
 ### Dependencies
 All dependencies are pure Python except:
 - `picamera2` - Raspberry Pi specific
-- `PyAudio` - Requires system libraries
+- `opencv-python` - Requires system libraries for motion detection
+- `ultralytics` - YOLO11n for person detection (auto-downloads model)
 
 ### Error Handling
 - Graceful degradation on component failures
@@ -244,9 +251,10 @@ All dependencies are pure Python except:
 ## Future Enhancements
 
 Potential additions:
-- [x] ~~Motion-activated triggering~~ (Implemented with OpenCV person detection)
+- [x] ~~Motion-activated triggering~~ (Implemented with two-stage person detection)
 - [x] ~~Local image saving~~ (Implemented with trace files)
 - [x] ~~Costume statistics/logging~~ (Implemented with JSON trace logs)
+- [x] ~~AI-powered person detection~~ (Implemented with YOLO11n)
 - [ ] Multi-language support
 - [ ] Custom sound effects
 - [ ] Web interface for monitoring
@@ -259,7 +267,8 @@ Potential additions:
 
 - Built with OpenAI's GPT-4o mini and TTS-1
 - Uses Google Speech Recognition
-- OpenCV for person detection
+- Ultralytics YOLO11n for AI-powered person detection
+- OpenCV for motion detection
 - Raspberry Pi Foundation for picamera2
 
 ## License
