@@ -50,15 +50,27 @@
 ```
 0. DETECTION PHASE (Auto-Detect Mode)
    ┌─────────────────┐
-   │ OpenCV monitors │
-   │  camera feed    │
+   │ Two-stage       │
+   │ detection       │
+   │ monitors feed   │
    │  (~2 FPS)       │
    └────────┬────────┘
             │
             ▼
       ┌────────────┐
-      │  Person    │
+      │  Stage 1:  │
+      │  Motion    │
       │ detected?  │
+      └─────┬──────┘
+            │
+       Yes──┴──No (continue monitoring)
+            │
+            ▼
+      ┌────────────┐
+      │  Stage 2:  │
+      │  YOLO11n   │
+      │  confirms  │
+      │  person?   │
       └─────┬──────┘
             │
        Yes──┴──No (continue monitoring)
@@ -215,9 +227,11 @@ HalloweenRoaster
 ├─── __init__(auto_detect, cooldown)
 │    ├─ Initialize OpenAI client
 │    ├─ Initialize camera (Picamera2)
+│    ├─ Initialize two-stage person detection:
+│    │  ├─ Stage 1: Motion detector (OpenCV MOG2)
+│    │  └─ Stage 2: YOLO11n person detector (Ultralytics)
 │    ├─ Initialize speech recognition
 │    ├─ Initialize audio playback (pygame)
-│    ├─ Initialize person detection (OpenCV Haar Cascade)
 │    ├─ Set up conversation context
 │    └─ Create traces directory
 │
@@ -226,11 +240,17 @@ HalloweenRoaster
 │    ├─ Convert to PIL Image
 │    └─ Return image + base64
 │
-├─── detect_person()
+├─── detect_motion()
 │    ├─ Capture frame from camera
-│    ├─ Convert to grayscale
-│    ├─ Run Haar Cascade detection
-│    └─ Return True if person detected
+│    ├─ Apply background subtraction (MOG2)
+│    ├─ Find contours in foreground mask
+│    └─ Return True if significant motion detected
+│
+├─── detect_person()
+│    ├─ Stage 1: Check for motion (fast pre-filter)
+│    ├─ If motion: Stage 2: Run YOLO11n detection
+│    ├─ Filter for 'person' class only (COCO class 0)
+│    └─ Return True if person detected with confidence > 0.4
 │
 ├─── is_cooldown_active()
 │    ├─ Check time since last interaction
@@ -275,7 +295,6 @@ HalloweenRoaster
 │
 └─── cleanup()
      ├─ Stop camera
-     ├─ Stop person detection
      └─ Quit audio
 ```
 
@@ -286,12 +305,13 @@ HalloweenRoaster
 ```
 ┌──────────────┐
 │  MONITORING  │◀──────────────────────────┐
-│  (OpenCV)    │                           │
+│  (Two-stage) │                           │
 └──────┬───────┘                           │
        │ ~0.5s intervals                   │
        ▼                                   │
     ┌──────┐                               │
-    │Person│                               │
+    │Stage1│                               │
+    │Motion│                               │
     │ in   │                               │
     │frame?│                               │
     └──┬───┘                               │
@@ -299,6 +319,16 @@ HalloweenRoaster
   Yes──┼──No                               │
        │   └───────────────────────────────┘
        ▼
+    ┌──────┐
+    │Stage2│
+    │YOLO  │
+    │person│
+    │conf? │
+    └──┬───┘
+       │
+  Yes──┼──No
+       │   └───────────────────────────────┐
+       ▼                                   │
     ┌────────┐
     │Cooldown│
     │expired?│
@@ -374,6 +404,8 @@ HalloweenRoaster
        └────────────────────────────────┘
   (back to MONITORING)
 
+```
+
 ### Manual Mode
 
 ```
@@ -420,8 +452,9 @@ HalloweenRoaster
 ## Performance Characteristics
 
 ### Timing
-- Person detection check: ~0.5s per check
-- Camera capture: ~0.5s
+- Motion detection (Stage 1): ~0.1-0.2s per check
+- YOLO11n detection (Stage 2): ~0.3-0.5s per check (when motion detected)
+- Camera capture (high-res): ~0.5s
 - Image encoding: ~0.2s
 - API request (vision): ~2-4s
 - API request (text): ~1-2s
@@ -438,11 +471,16 @@ HalloweenRoaster
 - **Total**: ~30-65s
 
 ### Resource Usage
-- Memory: ~200-400MB (includes OpenCV)
+- Memory: ~300-500MB (includes OpenCV + YOLO11n model)
 - CPU:
+  - Moderate during YOLO detection (~30-50% on Pi 5)
   - Moderate during API calls and audio processing
-  - Low during person detection monitoring
+  - Low during motion detection monitoring
+- Disk:
+  - YOLO11n model: ~6MB (one-time download)
+  - NCNN optimized model: ~12MB (auto-generated on first run)
 - Network:
+  - Model download: ~6MB (first run only)
   - API calls: ~100-500KB per interaction (includes TTS audio download)
 - Storage:
   - Local: ~500KB per trick-or-treater
