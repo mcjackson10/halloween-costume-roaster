@@ -1,529 +1,491 @@
 #!/usr/bin/env python3
 """
 Halloween Costume Roaster - Raspberry Pi 5
-Recognizes costumes, roasts trick-or-treaters, and engages in conversation
+Powered by Gemini 3.1 Flash Live for real-time, low-latency audio streaming.
+
+What changed from the original:
+  - Replaced OpenAI GPT-4o mini + OpenAI TTS + Google STT with a single
+    Gemini 3.1 Flash Live session per interaction.
+  - Audio streams back in real-time (no temp MP3 files, no pygame).
+  - Microphone audio goes straight to Gemini as raw PCM — no transcription step.
+  - PyAudio handles both mic input and speaker output.
+  - One API key, one connection, dramatically lower end-to-end latency.
 """
 
 import os
-import time
-import base64
 import io
+import time
+import asyncio
 import json
+import queue
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
-from dotenv import load_dotenv
-from openai import OpenAI
-from picamera2 import Picamera2
-from PIL import Image
-import speech_recognition as sr
-import pygame
-import tempfile
-import cv2
+
 import numpy as np
+import pyaudio
+import cv2
+from PIL import Image
+from picamera2 import Picamera2
+from dotenv import load_dotenv
+from google import genai
+from google.genai import types
+
 import sys
 
-# Load environment variables from .env file
 load_dotenv()
+
+# ----------------------------------------------------------------------------
+# Audio constants
+# ----------------------------------------------------------------------------
+MIC_RATE      = 16000        # Gemini Live expects 16 kHz PCM input
+SPEAKER_RATE  = 24000        # Gemini Live outputs 24 kHz PCM�UDIO_FORMAT  = pyaudio.paInt16
+CHANNELS      = 1
+CHUNK         = 1024
+
+# ----------------------------------------------------------------------------
+# Gemini model + system prompt
+# ----------------------------------------------------------------------------
+MODEL = "gemini-3.1-flash-live-preview"
+
+SYSTEM_PROMPT = (
+    "You are the all powerful Halloween Wizard of Oz, a snarky and witty costume critic. "
+    "When you first see someone, introduce yourself: 'I'm the all powerful Halloween Wizard of Oz!' "
+    "Then roast their costume — keep it playful, family-friendly, and under four sentences. "
+    "When they talk back, continue the banter with confidence. "
+    "IMPORTANT: only comment on the people and their costumes. "
+    "Never mention background elements like trees, flags, picture frames, or decorations. "
+    "Keep comebacks punchy and under three sentences."
+)
+
 
 class HalloweenRoaster:
     def __init__(self, auto_detect: bool = True, cooldown_seconds: int = 60):
-        """Initialize the Halloween Roaster system
-
-        Args:
-            auto_detect: Enable automatic person detection (default: True)
-            cooldown_seconds: Seconds to wait between detecting same person (default: 60)
         """
-        self.api_key = os.getenv("OPENAI_API_KEY")
-        if not self.api_key:
-            raise ValueError("OPENAI_API_KEY environment variable not set")
+        Args:
+            auto_detect:       Use YOLO11n + motion detection (default True).
+            cooldown_seconds:  Wait time between interactions (default 60s).
+        """
+        # --- Gemini client ---
+        api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "Set GOOGLE_API_KEY or GEMINI_API_KEY in your .env file.\n"
+                "Get a free key at https://aistudio.google.com/app/apikey"
+            )
+        self.client = genai.Client(api_key=api_key)
 
-        self.client = OpenAI(api_key=self.api_key)
-
-        # Detection settings
-        self.auto_detect = auto_detect
+        self.auto_detect      = auto_detect
         self.cooldown_seconds = cooldown_seconds
         self.last_interaction_time = 0
 
-        # Local trace directory
         self.traces_dir = Path("traces")
         self.traces_dir.mkdir(exist_ok=True)
 
-        # Initialize camera
+        # --- PyAudio (replaces pygame + SpeechRecognition) ---
+        print("Initializing audio (PyAudio)...")
+        self.pa = pyaudio.PyAudio()
+
+        # --- Camera ---
         print("Initializing camera...")
         self.camera = Picamera2()
-        camera_config = self.camera.create_still_configuration(
-            main={"size": (1920, 1080)},
-            buffer_count=2
-        )
-        self.camera.configure(camera_config)
-        self.camera.start()
-        time.sleep(2)  # Let camera warm up
-
-        # Initialize two-stage person detection system
-        if self.auto_detect:
-            print("Initializing two-stage person detection...")
-
-            # Stage 1: Motion detection (filters static objects)
-            print("  - Setting up motion detector...")
-            self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(
-                history=500,           # Number of frames for background model
-                varThreshold=16,       # Threshold for pixel variance (lower = more sensitive)
-                detectShadows=False    # Disable shadow detection to avoid false positives
+        self.camera.configure(
+            self.camera.create_still_configuration(
+                main={"size": (1920, 1080)}, buffer_count=2
             )
-            self.motion_threshold = 5000  # Minimum contour area in pixels to consider as motion
+        )
+        self.camera.start()
+        time.sleep(2)  # warm-up
 
-            # Stage 2: YOLO11 person detector
-            print("  - Loading YOLO11n person detection model...")
-            from ultralytics import YOLO
-
-            # Load YOLO11n (nano) model - will auto-download on first run (~6 MB)
-            self.person_model = YOLO('yolo11n.pt')
-
-            # Export to NCNN format for optimized CPU inference on Raspberry Pi
-            print("  - Optimizing model for Raspberry Pi (NCNN format)...")
-            try:
-                self.person_model.export(format='ncnn', imgsz=320)
-                # Load the optimized NCNN model
-                self.person_model = YOLO('yolo11n_ncnn_model', task='detect')
-                print("  - Using optimized NCNN model for best performance")
-            except Exception as e:
-                print(f"  - NCNN export failed ({e}), using standard model")
-                # Fall back to standard PyTorch model if NCNN export fails
-                pass
-
-            # Detection threshold (0.0-1.0, lower = more sensitive)
-            self.person_confidence_threshold = 0.4
-            print("✓ Two-stage detection initialized (Motion + YOLO11n)")
-
-        # Initialize speech recognition
-        print("Initializing speech recognition...")
-        self.recognizer = sr.Recognizer()
-        self.microphone = sr.Microphone()
-
-        # Adjust for ambient noise
-        with self.microphone as source:
-            print("Calibrating microphone for ambient noise...")
-            self.recognizer.adjust_for_ambient_noise(source, duration=2)
-
-        # Initialize audio playback (for bluetooth speaker)
-        print("Initializing audio playback...")
-        # Suppress JACK/ALSA error messages during pygame audio initialization
-        # pygame probes multiple audio backends and devices, generating errors for unavailable ones
-        stderr_backup = sys.stderr
-        try:
-            sys.stderr = open(os.devnull, 'w')
-            # Set SDL audio driver preference to PulseAudio (what Raspberry Pi uses)
-            os.environ.setdefault('SDL_AUDIODRIVER', 'pulseaudio')
-            pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=512)
-        finally:
-            sys.stderr.close()
-            sys.stderr = stderr_backup
-
-        # Conversation context
-        self.conversation_history = []
-        self.current_costume = None
+        # --- Person detection ---
+        if self.auto_detect:
+            self._init_detection()
 
         mode = "AUTO-DETECT" if self.auto_detect else "MANUAL"
-        print(f"Halloween Roaster initialized and ready! Mode: {mode}")
+        print(f"✓ Halloween Roaster ready! Mode: {mode}")
 
-    def capture_image(self) -> Tuple[Image.Image, bytes]:
-        """Capture an image from the camera and return PIL Image and base64 encoded data"""
-        print("Capturing image...")
+    # --------------------------------------------------------------------
+    # Detection (unchanged from original)
+    # --------------------------------------------------------------------
 
-        # Capture image as array
-        image_array = self.camera.capture_array()
+    def _init_detection(self):
+        print("Initializing two-stage person detection...")
+        self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(
+            history=500, varThreshold=16, detectShadows=False
+        )
+        self.motion_threshold = 5000
+        self.person_confidence_threshold = 0.4
 
-        # Convert to PIL Image
-        pil_image = Image.fromarray(image_array)
+        print("  - Loading YOLO11n model...")
+        from ultralytics import YOLO
+        self.person_model = YOLO("yolo11n.pt")
+        try:
+            self.person_model.export(format="ncnn", imgsz=320)
+            self.person_model = YOLO("yolo11n_ncnn_model", task="detect")
+            print("  - Using optimized NCNN model")
+        except Exception as exc:
+            print(f"  - NCNN export failed ({exc}), using standard model")
 
-        # Convert to JPEG and base64 encode
-        buffer = io.BytesIO()
-        pil_image.save(buffer, format="JPEG", quality=85)
-        image_bytes = buffer.getvalue()
-        image_base64 = base64.standard_b64encode(image_bytes).decode("utf-8")
-
-        return pil_image, image_base64
+        print("✓ Two-stage detection initialized (Motion + YOLO11n)")
 
     def detect_motion(self) -> bool:
-        """Stage 1: Fast motion detection to filter static objects
-
-        Returns:
-            True if significant motion detected, False otherwise
-        """
-        # Capture low-res frame for motion detection
-        image_array = self.camera.capture_array()
-
-        # Convert RGB to BGR for OpenCV
-        bgr_image = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
-
-        # Apply background subtraction
-        fg_mask = self.bg_subtractor.apply(bgr_image)
-
-        # Find contours in the foreground mask
-        contours, _ = cv2.findContours(
-            fg_mask,
-            cv2.RETR_EXTERNAL,
-            cv2.CHAIN_APPROX_SIMPLE
-        )
-
-        # Check if any contour is large enough to be considered motion
-        for contour in contours:
-            area = cv2.contourArea(contour)
-            if area > self.motion_threshold:
-                return True
-
-        return False
+        img = self.camera.capture_array()
+        bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        mask = self.bg_subtractor.apply(bgr)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        return any(cv2.contourArea(c) > self.motion_threshold for c in contours)
 
     def detect_person(self) -> bool:
-        """Two-stage person detection: motion first, then YOLO verification
-
-        Stage 1: Fast motion detection filters out static objects (trees, decorations)
-        Stage 2: YOLO11n verifies that motion is actually a person
-
-        Returns:
-            True if person detected, False otherwise
-        """
-        # Stage 1: Check for motion (fast pre-filter)
         if not self.detect_motion():
             return False
-
-        # Stage 2: Verify it's a person using YOLO11n
-        image_array = self.camera.capture_array()
-
-        # Run YOLO detection
+        img = self.camera.capture_array()
         results = self.person_model(
-            image_array,
-            conf=self.person_confidence_threshold,
-            classes=[0],  # Only detect 'person' class (class 0 in COCO dataset)
-            verbose=False,  # Suppress output
-            imgsz=320  # Input size for inference (balance speed/accuracy)
+            img, conf=self.person_confidence_threshold,
+            classes=[0], verbose=False, imgsz=320
         )
-
-        # Check if any person was detected
         if len(results[0].boxes) > 0:
-            # Get highest confidence detection
-            confidence = results[0].boxes[0].conf[0].item()
-            print(f"  ✓ Person detected (confidence: {confidence:.2%})")
+            conf = results[0].boxes[0].conf[0].item()
+            print(f"  ✓ Person detected (confidence: {conf:.2%})")
             return True
-
         return False
 
     def is_cooldown_active(self) -> bool:
-        """Check if we're still in cooldown period from last interaction"""
         if self.last_interaction_time == 0:
             return False
+        return (time.time() - self.last_interaction_time) < self.cooldown_seconds
 
-        elapsed = time.time() - self.last_interaction_time
-        return elapsed < self.cooldown_seconds
+    # --------------------------------------------------------------------
+    # Camera
+    # --------------------------------------------------------------------
 
-    def analyze_costume(self, image_base64: str) -> str:
-        """Use GPT-4o mini to analyze the costume in the image"""
-        print("Analyzing costume...")
+    def capture_image(self) -> Tuple[Image.Image, bytes]:
+        """Capture a still and return (PIL Image, raw JPEG bytes)."""
+        print("Capturing image...")
+        arr = self.camera.capture_array()
+        pil = Image.fromarray(arr)
+        buf = io.BytesIO()
+        pil.save(buf, format="JPEG", quality=85)
+        return pil, buf.getvalue()
 
-        response = self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            max_tokens=1024,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{image_base64}"
-                            }
-                        },
-                        {
-                            "type": "text",
-                            "text": "You are the all powerful Halloween Wizard of Oz, a snarky and witty costume critic. Start by introducing yourself: 'I'm the all powerful Halloween Wizard of Oz!' Then look at this person's costume and say what they're dressed as, followed by a playful, funny roast about it. IMPORTANT: Only comment on the person or people in the frame and their costumes. Completely ignore any background elements like trees, flags, picture frames, decorations, or other objects - focus exclusively on the people and what they're wearing. Keep it light, family-friendly, and under four sentences total. Write in a natural speaking style that sounds smooth and entertaining when read aloud. Do not use numbers, lists, or labels—just deliver it like a quick joke to the trick-or-treater."
-                        }
-                    ],
-                }
-            ],
+    # --------------------------------------------------------------------
+    # Audio I/O  (replaces gTTS + pygame + SpeechRecognition)
+    # --------------------------------------------------------------------
+
+    def _play_worker(self, audio_q: queue.Queue, stop_evt: threading.Event):
+        """Background thread: writes raw 24 kHz PCM chunks to the speaker."""
+        stream = self.pa.open(
+            format=AUDIO_FORMAT, channels=CHANNELS,
+            rate=SPEAKER_RATE, output=True, frames_per_buffer=CHUNK
         )
-
-        response_text = response.choices[0].message.content
-        self.current_costume = response_text
-        self.conversation_history.append({
-            "role": "assistant",
-            "content": response_text
-        })
-
-        return response_text
-
-    def listen_for_speech(self, timeout: int = 5) -> Optional[str]:
-        """Listen for speech from the microphone"""
-        print(f"Listening for speech (timeout: {timeout}s)...")
-
         try:
-            with self.microphone as source:
-                audio = self.recognizer.listen(source, timeout=timeout, phrase_time_limit=10)
-
-            print("Processing speech...")
-            text = self.recognizer.recognize_google(audio)
-            print(f"Recognized: {text}")
-            return text
-
-        except sr.WaitTimeoutError:
-            print("No speech detected")
-            return None
-        except sr.UnknownValueError:
-            print("Could not understand audio")
-            return None
-        except sr.RequestError as e:
-            print(f"Speech recognition error: {e}")
-            return None
-
-    def generate_response(self, user_input: str) -> str:
-        """Generate a witty response to user's comeback"""
-        print("Generating response...")
-
-        self.conversation_history.append({
-            "role": "user",
-            "content": user_input
-        })
-
-        system_prompt = """You are the all powerful Halloween Wizard of Oz, a snarky, witty Halloween character who just roasted someone's costume.
-        They're talking back to you! Continue the playful banter. Keep it fun, family-friendly, and hilarious.
-        You can reference their costume and what they say. IMPORTANT: Only comment on the person or people and their costumes. Never mention background elements like trees, flags, picture frames, or decorations - focus exclusively on the people and their outfits.
-        Speak with the confidence and authority of the all powerful Halloween Wizard of Oz. Keep responses under 3 sentences so they're quick and punchy."""
-
-        response = self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            max_tokens=1024,
-            messages=[
-                {"role": "system", "content": system_prompt}
-            ] + self.conversation_history
-        )
-
-        response_text = response.choices[0].message.content
-        self.conversation_history.append({
-            "role": "assistant",
-            "content": response_text
-        })
-
-        return response_text
-
-    def speak(self, text: str):
-        """Convert text to speech and play through bluetooth speaker"""
-        print(f"Speaking: {text}")
-
-        # Create temporary file for audio
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as fp:
-            temp_file = fp.name
-
-        try:
-            # Generate speech using OpenAI TTS with onyx voice (deep, spooky)
-            response = self.client.audio.speech.create(
-                model="tts-1",  # Faster model for real-time use
-                voice="onyx",   # Deep masculine voice for Halloween
-                input=text
-            )
-            response.stream_to_file(temp_file)
-
-            # Play audio
-            pygame.mixer.music.load(temp_file)
-            pygame.mixer.music.play()
-
-            # Wait for audio to finish
-            while pygame.mixer.music.get_busy():
-                time.sleep(0.1)
-
+            while not stop_evt.is_set():
+                try:
+                    chunk = audio_q.get(timeout=0.1)
+                    if chunk is None:   # sentinel — done
+                        break
+                    stream.write(chunk)
+                except queue.Empty:
+                    continue
         finally:
-            # Clean up temp file
-            pygame.mixer.music.unload()
-            time.sleep(0.1)
-            if os.path.exists(temp_file):
-                os.unlink(temp_file)
+            stream.stop_stream()
+            stream.close()
 
-    def save_trace_files(self, pil_image: Image.Image, interaction_data: dict) -> Tuple[str, str]:
-        """Save interaction trace files locally
-
-        Args:
-            pil_image: PIL Image from interaction
-            interaction_data: Dictionary with conversation history and metadata
-
-        Returns:
-            Tuple of (image_path, json_path)
+    def record_pcm(
+        self, max_seconds: int = 8, silence_timeout: float = 2.0
+    ) -> Optional[bytes]:
         """
-        # Generate timestamp-based filename
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base_filename = f"roast_{timestamp}"
+        Record from the microphone as raw 16 kHz, 16-bit PCM.
+        Stops early after `silence_timeout` seconds of quiet.
+        Returns None if no speech was detected.
+        """
+        print(f"  🎤 Listening (up to {max_seconds}s)...")
+        stream = self.pa.open(
+            format=AUDIO_FORMAT, channels=CHANNELS,
+            rate=MIC_RATE, input=True, frames_per_buffer=CHUNK
+        )
+        frames       = []
+        silence_rms  = 300   # amplitude threshold — tune for your mic
+        silent_count = 0
+        max_silent   = int(MIC_RATE / CHUNK * silence_timeout)
+        heard_speech = False
 
-        # Save image
-        image_path = self.traces_dir / f"{base_filename}.jpg"
-        pil_image.save(image_path, format="JPEG", quality=85)
-        print(f"✓ Saved image: {image_path}")
+        try:
+            for _ in range(int(MIC_RATE / CHUNK * max_seconds)):
+                data = stream.read(CHUNK, exception_on_overflow=False)
+                frames.append(data)
+                rms = float(np.sqrt(
+                    np.mean(np.frombuffer(data, np.int16).astype(np.float32) ** 2)
+                ))
+                if rms > silence_rms:
+                    heard_speech = True
+                    silent_count = 0
+                elif heard_speech:
+                    silent_count += 1
+                    if silent_count >= max_silent:
+                        break   # end of utterance
+        finally:
+            stream.stop_stream()
+            stream.close()
 
-        # Save JSON log
-        json_path = self.traces_dir / f"{base_filename}.json"
-        with open(json_path, 'w') as f:
-            json.dump(interaction_data, f, indent=2)
-        print(f"✓ Saved trace: {json_path}")
+        if not heard_speech:
+            print("  (no speech detected)")
+            return None
+        return b"".join(frames)
 
-        return str(image_path), str(json_path)
+    # --------------------------------------------------------------------
+    # Gemini 3.1 Flash Live session
+    # --------------------------------------------------------------------
 
+    async def _receive_turn(self, session) -> Tuple[bytes, str]:
+        """
+        Consume one complete model turn from the Live session.
+        Audio chunks are streamed to the speaker in real-time via a
+        background thread so playback starts immediately.
+        Returns (raw_audio_bytes, transcript_string).
+        """
+        audio_q  = queue.Queue()
+        stop_evt = threading.Event()
+        play_thr = threading.Thread(
+            target=self._play_worker, args=(audio_q, stop_evt), daemon=True
+        )
+        play_thr.start()
 
-    def run_interaction(self):
-        """Run a single interaction: capture, roast, and allow conversation"""
-        print("\n" + "="*50)
-        print("Starting new interaction...")
-        print("="*50)
+        audio_buf  = []
+        transcript = ""
 
-        # Update last interaction time for cooldown
-        interaction_timestamp = datetime.now().isoformat()
-        self.last_interaction_time = time.time()
+        try:
+            async for response in session.receive():
+                sc = response.server_content
+                if sc:
+                    if sc.model_turn:
+                        for part in sc.model_turn.parts:
+                            # NOTE: Gemini 3.1 Flash Live may return audio + transcript
+                            # in the *same* event — process all parts each iteration.
+                            if part.inline_data:
+                                chunk = part.inline_data.data
+                                audio_buf.append(chunk)
+                                audio_q.put(chunk)
+                    if sc.output_transcription:
+                        transcript += sc.output_transcription.text
+                    if sc.turn_complete:
+                        break
+        finally:
+            audio_q.put(None)       # signal playback thread to finish
+            play_thr.join(timeout=15)
+            stop_evt.set()
 
-        # Reset conversation history for new person
-        self.conversation_history = []
+        if transcript:
+            print(f"  🎃 Gemini: {transcript}")
+        return b"".join(audio_buf), transcript
 
-        # Capture and analyze costume
-        pil_image, image_base64 = self.capture_image()
-        roast = self.analyze_costume(image_base64)
-
-        print(f"\nRoast: {roast}")
-        self.speak(roast)
-
-        # Allow up to 3 exchanges
-        exchanges_count = 0
-        for i in range(3):
-            print(f"\n--- Exchange {i+1}/3 ---")
-            user_speech = self.listen_for_speech(timeout=8)
-
-            if user_speech is None:
-                if i == 0:
-                    # No response to initial roast
-                    farewell = "What's wrong? Cat got your tongue? Or did your costume make you speechless too?"
-                    print(f"Farewell: {farewell}")
-                    self.speak(farewell)
-                break
-
-            # Generate and speak response
-            response = self.generate_response(user_speech)
-            print(f"Response: {response}")
-            self.speak(response)
-            exchanges_count = i + 1
-
-        print("\nInteraction complete!")
-
-        # Save trace files
-        print("\nSaving trace files...")
-        interaction_data = {
-            "timestamp": interaction_timestamp,
-            "costume_description": self.current_costume,
-            "conversation_history": self.conversation_history,
-            "exchanges_count": exchanges_count,
-            "mode": "auto" if self.auto_detect else "manual"
+    async def _live_session(self, image_bytes: bytes) -> dict:
+        """
+        Open one Gemini 3.1 Flash Live WebSocket session for a complete
+        trick-or-treater interaction (roast + up to 3 voice exchanges).
+        """
+        config = {
+            "response_modalities": ["AUDIO"],
+            # Charon: deep, dramatic — perfect for the Halloween Wizard of Oz
+            "speech_config": {
+                "voice_config": {
+                    "prebuilt_voice_config": {"voice_name": "Charon"}
+                }
+            },
+            "system_instruction": SYSTEM_PROMPT,
+            # minimal thinking = lowest latency (default for 3.1)
+            "thinking_config": {"thinking_level": "minimal"},
+            # capture transcriptions so trace files remain readable
+            "output_audio_transcription": {},
         }
 
-        image_path, json_path = self.save_trace_files(pil_image, interaction_data)
+        conversation_log  = []
+        exchanges_count   = 0
+
+        async with self.client.aio.live.connect(model=MODEL, config=config) as session:
+
+            # ── Initial roast ────────────────────────────────────────────
+            print("Sending costume image to Gemini Live...")
+            await session.send_realtime_input(
+                video=types.Blob(data=image_bytes, mime_type="image/jpeg")
+            )
+            await session.send_realtime_input(
+                text="Roast this trick-or-treater's Halloween costume!"
+            )
+            _, roast_text = await self._receive_turn(session)
+            conversation_log.append({
+                "role": "assistant",
+                "content": roast_text or "[audio roast]"
+            })
+
+            # ── Conversation loop (up to 3 exchanges) ────────────────────
+            for i in range(3):
+                print(f"\n--- Exchange {i + 1}/3 ---")
+                user_audio = self.record_pcm(max_seconds=8, silence_timeout=2.0)
+
+                if user_audio is None:
+                    # No response from the trick-or-treater
+                    if i == 0:
+                        await session.send_realtime_input(
+                            text=(
+                                "They didn't respond at all. Give a quick funny farewell "
+                                "— they seem completely speechless by your magnificence!"
+                            )
+                        )
+                        _, farewell = await self._receive_turn(session)
+                        conversation_log.append({
+                            "role": "assistant",
+                            "content": farewell or "[farewell audio]"
+                        })
+                    break
+
+                # Send raw mic audio directly to Gemini — no STT step needed
+                print("  Sending voice response to Gemini Live...")
+                conversation_log.append({"role": "user", "content": "[voice]"})
+                await session.send_realtime_input(
+                    audio=types.Blob(data=user_audio, mime_type="audio/pcm;rate=16000")
+                )
+                _, comeback = await self._receive_turn(session)
+                conversation_log.append({
+                    "role": "assistant",
+                    "content": comeback or "[audio comeback]"
+                })
+                exchanges_count = i + 1
+
+        return {
+            "conversation_history": conversation_log,
+            "exchanges_count":      exchanges_count,
+        }
+
+    # --------------------------------------------------------------------
+    # Interaction orchestration
+    # --------------------------------------------------------------------
+
+    def run_interaction(self):
+        print("\n" + "=" * 50)
+        print("Starting new interaction...")
+        print("=" * 50)
+
+        timestamp = datetime.now().isoformat()
+        self.last_interaction_time = time.time()
+
+        pil_image, image_bytes = self.capture_image()
+
+        # Bridge sync→async for the Live session
+        result = asyncio.run(self._live_session(image_bytes))
+
+        print("\nInteraction complete!")
+        self._save_trace(pil_image, {
+            "timestamp":            timestamp,
+            "model":                MODEL,
+            "conversation_history": result["conversation_history"],
+            "exchanges_count":      result["exchanges_count"],
+            "mode":                 "auto" if self.auto_detect else "manual",
+        })
+
+    def _save_trace(self, pil_image: Image.Image, data: dict):
+        ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base = f"roast_{ts}"
+
+        img_path = self.traces_dir / f"{base}.jpg"
+        pil_image.save(img_path, format="JPEG", quality=85)
+        print(f"✓ Saved image: {img_path}")
+
+        json_path = self.traces_dir / f"{base}.json"
+        with open(json_path, "w") as f:
+            json.dump(data, f, indent=2)
+        print(f"✓ Saved trace: {json_path}")
+
+    # --------------------------------------------------------------------
+    # Main run loop
+    # --------------------------------------------------------------------
 
     def run(self):
-        """Main run loop - supports both auto-detect and manual modes"""
         print("\n🎃 Halloween Roaster is running! 🎃")
         print("Press Ctrl+C to exit")
-
         if self.auto_detect:
-            print(f"\n🤖 AUTO-DETECT MODE")
-            print(f"Cooldown between detections: {self.cooldown_seconds} seconds")
-            print("Monitoring for trick-or-treaters...\n")
+            print(f"\n🤖 AUTO-DETECT MODE — cooldown: {self.cooldown_seconds}s")
             self._run_auto_detect()
         else:
             print("\n👤 MANUAL MODE")
-            print("Waiting for trick-or-treaters...\n")
             self._run_manual()
 
     def _run_auto_detect(self):
-        """Auto-detect mode: continuously monitor for people"""
         try:
             while True:
-                # Check cooldown first
                 if self.is_cooldown_active():
-                    remaining = int(self.cooldown_seconds - (time.time() - self.last_interaction_time))
-                    if remaining % 10 == 0 or remaining <= 5:  # Print occasionally
-                        print(f"Cooldown active: {remaining}s remaining...", end='\r')
+                    rem = int(self.cooldown_seconds - (time.time() - self.last_interaction_time))
+                    if rem % 10 == 0 or rem <= 5:
+                        print(f"Cooldown: {rem}s remaining...", end="\r")
                     time.sleep(1)
                     continue
-
-                # Check for person
                 if self.detect_person():
                     print("\n👻 Person detected! Starting interaction...")
                     self.run_interaction()
                     print(f"\nMonitoring resumed (cooldown: {self.cooldown_seconds}s)...")
                 else:
-                    # Print status occasionally
-                    print("Monitoring for trick-or-treaters...", end='\r')
-                    time.sleep(0.5)  # Check twice per second
-
+                    print("Monitoring for trick-or-treaters...", end="\r")
+                    time.sleep(0.5)
         except KeyboardInterrupt:
-            print("\n\nShutting down Halloween Roaster...")
+            print("\n\nShutting down...")
             self.cleanup()
 
     def _run_manual(self):
-        """Manual mode: wait for user input to trigger interactions"""
         try:
             while True:
                 input("Press Enter when someone arrives (or Ctrl+C to exit)...")
                 self.run_interaction()
                 print("\nReady for next person...")
-
         except KeyboardInterrupt:
-            print("\n\nShutting down Halloween Roaster...")
+            print("\n\nShutting down...")
             self.cleanup()
 
     def cleanup(self):
-        """Clean up resources"""
         print("Cleaning up...")
         self.camera.stop()
-        pygame.mixer.quit()
+        self.pa.terminate()
         print("Goodbye! 🎃")
 
+
+# ----------------------------------------------------------------------------
+# Entry point
+# ----------------------------------------------------------------------------
+
 def main():
-    """Main entry point"""
     import argparse
 
     print("🎃 Halloween Costume Roaster 🎃")
-    print("================================\n")
+    print("Powered by Gemini 3.1 Flash Live")
+    print("=================================\n")
 
     parser = argparse.ArgumentParser(
-        description="Halloween Costume Roaster with auto-detection",
+        description="Halloween Costume Roaster — real-time voice via Gemini 3.1 Flash Live",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python3 halloween_roaster.py                   # Auto-detect mode (default)
-  python3 halloween_roaster.py --manual          # Manual mode (press Enter)
-  python3 halloween_roaster.py --cooldown 90     # 90 second cooldown
-        """
+  python3 halloween_roaster.py              # Auto-detect mode (default)
+  python3 halloween_roaster.py --manual     # Press Enter to trigger each roast
+  python3 halloween_roaster.py --cooldown 90
+        """,
     )
-
-    parser.add_argument(
-        "--manual",
-        action="store_true",
-        help="Disable auto-detection (manual Enter key mode)"
-    )
-
-    parser.add_argument(
-        "--cooldown",
-        type=int,
-        default=60,
-        help="Cooldown seconds between detections (default: 60)"
-    )
-
+    parser.add_argument("--manual",   action="store_true", help="Disable auto-detection")
+    parser.add_argument("--cooldown", type=int, default=60,
+                        help="Seconds between detections (default: 60)")
     args = parser.parse_args()
 
     try:
         roaster = HalloweenRoaster(
             auto_detect=not args.manual,
-            cooldown_seconds=args.cooldown
+            cooldown_seconds=args.cooldown,
         )
         roaster.run()
     except KeyboardInterrupt:
         print("\n\nExiting...")
-    except Exception as e:
-        print(f"\nError: {e}")
+    except Exception as exc:
+        print(f"\nError: {exc}")
         import traceback
         traceback.print_exc()
+
 
 if __name__ == "__main__":
     main()
