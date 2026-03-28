@@ -1,9 +1,14 @@
-# Core dependencies for Halloween Roaster
-openai>=1.0.0
+# Halloween Costume Roaster — dependencies (Gemini 3.1 Flash Live edition)
+#
+# Changes from original:
+#   ADDED:   google-genai      — Gemini Live API (replaces openai)
+#   REMOVED: openai            — no longer needed
+#   REMOVED: SpeechRecognition — Gemini Live handles STT natively
+#   REMOVED: pygame            — PyAudio now handles speaker output
+
+google-genai>=1.0.0
 picamera2>=0.3.18
 pillow>=10.0.0
-SpeechRecognition>=3.10.0
-pygame>=2.5.0
 PyAudio>=0.2.14
 opencv-python>=4.8.0
 numpy>=1.24.0
