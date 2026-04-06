@@ -250,7 +250,7 @@ class HalloweenRoaster:
     # Gemini 3.1 Flash Live session
     # --------------------------------------------------------------------
 
-    async def _receive_turn(self, session) -> Tuple[bytes, str]:
+    async def _receive_turn(self, session, timeout: float = 30.0) -> Tuple[bytes, str]:
         """
         Consume one complete model turn from the Live session.
         Audio chunks are streamed to the speaker in real-time via a
@@ -267,7 +267,7 @@ class HalloweenRoaster:
         audio_buf  = []
         transcript = ""
 
-        try:
+        async def _collect():
             async for response in session.receive():
                 sc = response.server_content
                 if sc:
@@ -282,7 +282,12 @@ class HalloweenRoaster:
                     if sc.output_transcription:
                         transcript += sc.output_transcription.text
                     if sc.turn_complete:
-                        break
+                        return
+
+        try:
+            await asyncio.wait_for(_collect(), timeout=timeout)
+        except asyncio.TimeoutError:
+            print(f"  ⚠️  Gemini response timed out after {timeout}s — moving on.")
         finally:
             audio_q.put(None)       # signal playback thread to finish
             play_thr.join(timeout=15)
@@ -358,6 +363,8 @@ class HalloweenRoaster:
                 await session.send_realtime_input(
                     audio=types.Blob(data=user_audio, mime_type="audio/pcm;rate=16000")
                 )
+                # Signal end-of-turn so Gemini doesn't wait for more audio
+                await session.send_realtime_input(end_of_turn=True)
                 _, comeback = await self._receive_turn(session)
                 conversation_log.append({
                     "role": "assistant",
