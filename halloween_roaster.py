@@ -27,7 +27,6 @@ import numpy as np
 import pyaudio
 import cv2
 from PIL import Image
-from picamera2 import Picamera2
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -40,7 +39,8 @@ load_dotenv()
 # Audio constants
 # ----------------------------------------------------------------------------
 MIC_RATE      = 16000        # Gemini Live expects 16 kHz PCM input
-SPEAKER_RATE  = 24000        # Gemini Live outputs 24 kHz PCM�UDIO_FORMAT  = pyaudio.paInt16
+SPEAKER_RATE  = 24000        # Gemini Live outputs 24 kHz PCM
+AUDIO_FORMAT  = pyaudio.paInt16
 CHANNELS      = 1
 CHUNK         = 1024
 
@@ -87,16 +87,19 @@ class HalloweenRoaster:
         print("Initializing audio (PyAudio)...")
         self.pa = pyaudio.PyAudio()
 
-        # --- Camera ---
+        # --- Camera (USB: Arducam 4K 8MP IMX219) ---
         print("Initializing camera...")
-        self.camera = Picamera2()
-        self.camera.configure(
-            self.camera.create_still_configuration(
-                main={"size": (1920, 1080)}, buffer_count=2
-            )
-        )
-        self.camera.start()
-        time.sleep(2)  # warm-up
+        self.cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH,  1920)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+        self.cap.set(cv2.CAP_PROP_FPS, 30)
+        if not self.cap.isOpened():
+            raise RuntimeError("Could not open /dev/video0 — is the USB camera connected?")
+        # Flush a few frames so the first capture isn't stale
+        for _ in range(5):
+            self.cap.read()
+        time.sleep(1)  # warm-up
 
         # --- Person detection ---
         if self.auto_detect:
@@ -130,8 +133,9 @@ class HalloweenRoaster:
         print("✓ Two-stage detection initialized (Motion + YOLO11n)")
 
     def detect_motion(self) -> bool:
-        img = self.camera.capture_array()
-        bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        ret, bgr = self.cap.read()
+        if not ret:
+            return False
         mask = self.bg_subtractor.apply(bgr)
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         return any(cv2.contourArea(c) > self.motion_threshold for c in contours)
@@ -139,7 +143,9 @@ class HalloweenRoaster:
     def detect_person(self) -> bool:
         if not self.detect_motion():
             return False
-        img = self.camera.capture_array()
+        ret, img = self.cap.read()
+        if not ret:
+            return False
         results = self.person_model(
             img, conf=self.person_confidence_threshold,
             classes=[0], verbose=False, imgsz=320
@@ -162,8 +168,11 @@ class HalloweenRoaster:
     def capture_image(self) -> Tuple[Image.Image, bytes]:
         """Capture a still and return (PIL Image, raw JPEG bytes)."""
         print("Capturing image...")
-        arr = self.camera.capture_array()
-        pil = Image.fromarray(arr)
+        ret, frame = self.cap.read()
+        if not ret:
+            raise RuntimeError("Failed to capture image from USB camera")
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        pil = Image.fromarray(rgb)
         buf = io.BytesIO()
         pil.save(buf, format="JPEG", quality=85)
         return pil, buf.getvalue()
@@ -442,7 +451,7 @@ class HalloweenRoaster:
 
     def cleanup(self):
         print("Cleaning up...")
-        self.camera.stop()
+        self.cap.release()
         self.pa.terminate()
         print("Goodbye! 🎃")
 
