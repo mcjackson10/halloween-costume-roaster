@@ -364,8 +364,8 @@ class HalloweenRoaster:
                 await session.send_realtime_input(
                     audio=types.Blob(data=user_audio, mime_type="audio/pcm;rate=16000")
                 )
-                # Signal end-of-turn so Gemini doesn't wait for more audio
-                await session.send_realtime_input(end_of_turn=True)
+                # Signal end-of-stream so Gemini doesn't wait for more audio
+                await session.send_realtime_input(audio_stream_end=True)
                 _, comeback = await self._receive_turn(session)
                 conversation_log.append({
                     "role": "assistant",
