@@ -268,6 +268,7 @@ class HalloweenRoaster:
         transcript = ""
 
         async def _collect():
+            nonlocal transcript
             async for response in session.receive():
                 sc = response.server_content
                 if sc:
